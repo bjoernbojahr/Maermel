@@ -1,0 +1,2 @@
+// Filter-Keytracking: Rauschen (noise.wav, liegt daneben) durch LP24 mit Resonanz; die Resonanzspitze zeigt den Cutoff.
+<region> sample=noise.wav lokey=0 hikey=127 pitch_keytrack=0 loop_mode=loop_continuous loop_start=0 loop_end=44099

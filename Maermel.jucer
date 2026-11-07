@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+ 
+<JUCERPROJECT id="nT29YE" name="Maermel" projectType="audioplug" useAppConfig="0"
+              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" companyName="Bjoern Bojahr"
+              companyWebsite="www.bjoernbojahr.de" companyEmail="info@bjoernbojahr.de"
+              pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
+              pluginName="Maermel" pluginDesc="SFZ Player" pluginVST3Category="Sampler"
+              pluginCode="Bjsp" pluginManufacturerCode="BJBO" pluginManufacturer="Bjoern Bojahr"
+              aaxIdentifier="de.bjoernbojahr.Maermel" bundleIdentifier="de.bjoernbojahr.Maermel"
+              cppLanguageStandard="17" version="1.0.0" pluginFormats="buildVST3,buildAU,buildStandalone,buildLV2"
+              lv2Uri="https://www.bjoernbojahr.de/plugins/maermel">
+  <MAINGROUP id="yYA7hr" name="Maermel">
+    <GROUP id="{EBA303C1-BADA-88B4-4218-9EBC00B43BBB}" name="Resources">
+      <GROUP id="{FA3C9CD9-31CD-E951-1259-83EE20028E9D}" name="Fonts">
+        <FILE id="AQuaHL" name="BarlowSemiCondensed-Medium.ttf" compile="0"
+              resource="1" file="Resources/Fonts/BarlowSemiCondensed-Medium.ttf"/>
+        <FILE id="Vcdl7l" name="BarlowSemiCondensed-SemiBold.ttf" compile="0"
+              resource="1" file="Resources/Fonts/BarlowSemiCondensed-SemiBold.ttf"/>
+        <FILE id="qmkZEE" name="OFL.txt" compile="0" resource="1" file="Resources/Fonts/OFL.txt"/>
+      </GROUP>
+      <GROUP id="{A1874DF0-C35D-5E7B-A5FE-F9F9A5CCDD15}" name="Icon">
+        <FILE id="EF5Hpj" name="Maermel-Icon-1024.png" compile="0" resource="0"
+              file="Resources/Icon/Maermel-Icon-1024.png"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="{DC259C6C-D435-7746-C9AA-D826BD4D97F0}" name="Source">
+      <GROUP id="{8775F3A3-26C4-246A-B7C3-F5909E066F2B}" name="engine">
+        <GROUP id="{F79F7A83-07AA-7A35-3F32-A4DF0E8B3FBA}" name="chorus">
+          <FILE id="yvE1xN" name="AnalogChorus.h" compile="0" resource="0" file="Source/engine/chorus/AnalogChorus.h"/>
+          <FILE id="PtrnM1" name="ChorusBuildingBlocks.h" compile="0" resource="0"
+                file="Source/engine/chorus/ChorusBuildingBlocks.h"/>
+        </GROUP>
+        <GROUP id="{327C882D-DE14-78B9-FE46-3D619F1F07EB}" name="exs">
+          <FILE id="GocMNE" name="EXSInstrument.h" compile="0" resource="0" file="Source/engine/exs/EXSInstrument.h"/>
+          <FILE id="Cd4oOB" name="EXSParser.cpp" compile="1" resource="0" file="Source/engine/exs/EXSParser.cpp"/>
+          <FILE id="oWZH9A" name="EXSParser.h" compile="0" resource="0" file="Source/engine/exs/EXSParser.h"/>
+          <FILE id="MPi92W" name="SFZWriter.cpp" compile="1" resource="0" file="Source/engine/exs/SFZWriter.cpp"/>
+          <FILE id="kydknx" name="SFZWriter.h" compile="0" resource="0" file="Source/engine/exs/SFZWriter.h"/>
+        </GROUP>
+        <FILE id="mMk9Nr" name="Envelope.h" compile="0" resource="0" file="Source/engine/Envelope.h"/>
+        <FILE id="ZXKOeQ" name="ExsImport.cpp" compile="1" resource="0" file="Source/engine/ExsImport.cpp"/>
+        <FILE id="alPwXW" name="ExsImport.h" compile="0" resource="0" file="Source/engine/ExsImport.h"/>
+        <FILE id="C7gjTF" name="FileUtil.h" compile="0" resource="0" file="Source/engine/FileUtil.h"/>
+        <FILE id="RKXmlM" name="Filter.h" compile="0" resource="0" file="Source/engine/Filter.h"/>
+        <FILE id="wfU15a" name="Instrument.cpp" compile="1" resource="0" file="Source/engine/Instrument.cpp"/>
+        <FILE id="M5MzQH" name="Instrument.h" compile="0" resource="0" file="Source/engine/Instrument.h"/>
+        <FILE id="dSBTMX" name="InstrumentLocator.cpp" compile="1" resource="0"
+              file="Source/engine/InstrumentLocator.cpp"/>
+        <FILE id="CvrEoP" name="InstrumentLocator.h" compile="0" resource="0"
+              file="Source/engine/InstrumentLocator.h"/>
+        <FILE id="rfEkB7" name="Lfo.h" compile="0" resource="0" file="Source/engine/Lfo.h"/>
+        <FILE id="ZDJj0j" name="SampleFile.cpp" compile="1" resource="0" file="Source/engine/SampleFile.cpp"/>
+        <FILE id="x2HfY8" name="SampleFile.h" compile="0" resource="0" file="Source/engine/SampleFile.h"/>
+        <FILE id="kAslXo" name="SfzExport.cpp" compile="1" resource="0" file="Source/engine/SfzExport.cpp"/>
+        <FILE id="d6fc8S" name="SfzExport.h" compile="0" resource="0" file="Source/engine/SfzExport.h"/>
+        <FILE id="FDNh1v" name="SfzParser.cpp" compile="1" resource="0" file="Source/engine/SfzParser.cpp"/>
+        <FILE id="PP4sSS" name="SfzParser.h" compile="0" resource="0" file="Source/engine/SfzParser.h"/>
+        <FILE id="PChPuu" name="SfzTypes.h" compile="0" resource="0" file="Source/engine/SfzTypes.h"/>
+        <FILE id="JSIKXT" name="Synth.cpp" compile="1" resource="0" file="Source/engine/Synth.cpp"/>
+        <FILE id="NpiDnr" name="Synth.h" compile="0" resource="0" file="Source/engine/Synth.h"/>
+        <FILE id="EUeCCr" name="VelocityResponse.h" compile="0" resource="0"
+              file="Source/engine/VelocityResponse.h"/>
+      </GROUP>
+      <FILE id="anOGwZ" name="AboutPanel.cpp" compile="1" resource="0" file="Source/AboutPanel.cpp"/>
+      <FILE id="UP8pjg" name="AboutPanel.h" compile="0" resource="0" file="Source/AboutPanel.h"/>
+      <FILE id="HhI4mf" name="DotMatrixFont.h" compile="0" resource="0" file="Source/DotMatrixFont.h"/>
+      <FILE id="wGQcaB" name="ErrorLog.h" compile="0" resource="0" file="Source/ErrorLog.h"/>
+      <FILE id="oZFkOL" name="LibraryIndex.cpp" compile="1" resource="0"
+            file="Source/LibraryIndex.cpp"/>
+      <FILE id="l3c3Ve" name="LibraryIndex.h" compile="0" resource="0" file="Source/LibraryIndex.h"/>
+      <FILE id="OVAFny" name="LicenseTexts.h" compile="0" resource="0" file="Source/LicenseTexts.h"/>
+      <FILE id="EyZJjZ" name="MaermelControls.cpp" compile="1" resource="0"
+            file="Source/MaermelControls.cpp"/>
+      <FILE id="KDQ62w" name="MaermelControls.h" compile="0" resource="0"
+            file="Source/MaermelControls.h"/>
+      <FILE id="MGeRgG" name="MaermelLook.cpp" compile="1" resource="0" file="Source/MaermelLook.cpp"/>
+      <FILE id="TVqegM" name="MaermelLook.h" compile="0" resource="0" file="Source/MaermelLook.h"/>
+      <FILE id="q4jW5E" name="NotesPanel.cpp" compile="1" resource="0" file="Source/NotesPanel.cpp"/>
+      <FILE id="evaWax" name="NotesPanel.h" compile="0" resource="0" file="Source/NotesPanel.h"/>
+      <FILE id="CeG5eo" name="ParameterControl.h" compile="0" resource="0"
+            file="Source/ParameterControl.h"/>
+      <FILE id="ZXQslE" name="ParameterIds.h" compile="0" resource="0" file="Source/ParameterIds.h"/>
+      <FILE id="aXeEWR" name="PluginEditor.cpp" compile="1" resource="0"
+            file="Source/PluginEditor.cpp"/>
+      <FILE id="Md8M45" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="oRtF2t" name="PluginProcessor.cpp" compile="1" resource="0"
+            file="Source/PluginProcessor.cpp"/>
+      <FILE id="Cg34FG" name="PluginProcessor.h" compile="0" resource="0"
+            file="Source/PluginProcessor.h"/>
+      <FILE id="SW5GUv" name="SettingsDialog.cpp" compile="1" resource="0"
+            file="Source/SettingsDialog.cpp"/>
+      <FILE id="pFX6LZ" name="SettingsDialog.h" compile="0" resource="0"
+            file="Source/SettingsDialog.h"/>
+      <FILE id="OMi8y4" name="ValueParsing.h" compile="0" resource="0" file="Source/ValueParsing.h"/>
+      <FILE id="XNTrcv" name="VelocityTools.h" compile="0" resource="0" file="Source/VelocityTools.h"/>
+    </GROUP>
+  </MAINGROUP>
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="1"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_processors_headless" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="1"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+  </MODULES>
+  <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_VST3_CAN_REPLACE_VST2="0"
+               JUCE_USE_CURL="0" JUCE_WEB_BROWSER="0" JUCE_USE_FLAC="0" JUCE_USE_OGGVORBIS="0"
+               JUCE_USE_OPUS="0" JUCE_USE_MP3AUDIOFORMAT="0" JUCE_USE_WINDOWS_MEDIA_FORMAT="0"/>
+  <EXPORTFORMATS>
+    <XCODE_MAC targetFolder="Builds/MacOSX" hardenedRuntime="1" applicationCategory="public.app-category.music"
+               prebuildCommand="touch &quot;$PROJECT_DIR/../../Source/AboutPanel.cpp&quot;"
+               bigIcon="EF5Hpj">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="Maermel" macOSDeploymentTarget="10.11"
+                       osxCompatibility="10.11 SDK"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="Maermel" macOSDeploymentTarget="10.11"
+                       osxCompatibility="10.11 SDK" linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="../../JUCE/modules"/>
+      </MODULEPATHS>
+    </XCODE_MAC>
+    <VS2022 targetFolder="Builds/VisualStudio2022" extraCompilerFlags="/utf-8"
+            bigIcon="EF5Hpj">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug"/>
+        <CONFIGURATION isDebug="0" name="Release" useRuntimeLibDLL="0" linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+      </MODULEPATHS>
+    </VS2022>
+    <LINUX_MAKE targetFolder="Builds/LinuxMakefile" extraLinkerFlags="-Wl,--as-needed"
+                extraDefs="JUCE_JACK=1">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug"/>
+        <CONFIGURATION isDebug="0" name="Release" linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="/Users/bjornbojahr/Documents/Programmierung/JUCE/modules"/>
+      </MODULEPATHS>
+    </LINUX_MAKE>
+  </EXPORTFORMATS>
+</JUCERPROJECT>

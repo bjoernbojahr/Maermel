@@ -1,0 +1,9 @@
+// Überblendungen (19.10.2026). Samples aus ../layer (dort erzeugen.py ausführen).
+// Taste 60: Grundton 220 Hz immer, dazu 660 Hz per Sustain-Pedal (CC 64) eingeblendet
+<region> sample=../layer/layer0.wav key=60 pitch_keycenter=60
+<region> sample=../layer/layer2.wav key=60 pitch_keycenter=60 xfin_locc64=0 xfin_hicc64=127
+// Taste 62: 1100 Hz per Modulationsrad (CC 1) eingeblendet, lineare Kurve
+<region> sample=../layer/layer4.wav key=62 pitch_keycenter=62 xfin_locc1=0 xfin_hicc1=127 xf_cccurve=gain
+// Taste 64: leise Schicht (220 Hz) blendet aus, harte Schicht (660 Hz) blendet ein, Velocity 40 ... 100
+<region> sample=../layer/layer0.wav key=64 pitch_keycenter=64 xfout_lovel=40 xfout_hivel=100
+<region> sample=../layer/layer2.wav key=64 pitch_keycenter=64 xfin_lovel=40 xfin_hivel=100

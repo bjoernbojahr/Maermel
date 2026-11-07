@@ -1,0 +1,11 @@
+// Noten-Zählung: Tasten 48-59 spielen 6 Layer, Tasten 60-71 ein Stereo-Sample; dazu Release-Samples auf 60-71
+<group> lokey=48 hikey=59 pitch_keycenter=57
+<region> sample=layer0.wav
+<region> sample=layer1.wav
+<region> sample=layer2.wav
+<region> sample=layer3.wav
+<region> sample=layer4.wav
+<region> sample=layer5.wav
+<group> lokey=60 hikey=71 pitch_keycenter=64
+<region> sample=single.wav
+<region> sample=rel.wav trigger=release

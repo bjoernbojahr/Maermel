@@ -1,0 +1,9 @@
+set mode 16
+0.0 pedal down
+0.05 on 57 80
+0.10 off 57
+0.60 on 57 80
+0.70 pedal up
+0.90 pedal down
+1.20 off 57
+2.50 pedal up

@@ -1,0 +1,4 @@
+<region> sample=A_smpl2x.wav key=10 pitch_keycenter=sample
+<region> sample=B_data2x.wav key=20 pitch_keycenter=sample
+<region> sample=C_inst.wav key=30 pitch_keycenter=sample
+<region> sample=D_inst2x.aif key=40 pitch_keycenter=sample

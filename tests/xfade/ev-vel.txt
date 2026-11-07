@@ -1,0 +1,5 @@
+set release 0.05
+set velrange 0
+0.0 note 64 20 0.4
+0.5 note 64 70 0.4
+1.0 note 64 127 0.4

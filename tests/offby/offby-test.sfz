@@ -1,0 +1,8 @@
+// group/off_by-Test (26.10.2026): Taste 42 = geschlossene Hi-Hat (group=1), Taste 46 = offene Hi-Hat (group=2, off_by=1),
+// Taste 44 = Pedal-Hi-Hat (group=1, zwei Layer). Samples aus ../layer (dort erzeugen.py ausführen).
+<group> loop_mode=loop_continuous
+<region> sample=../layer/layer0.wav key=42 group=1
+<region> sample=../layer/layer1.wav key=46 group=2 off_by=1
+<region> sample=../layer/layer2.wav key=44 group=1
+<region> sample=../layer/layer3.wav key=44 group=1
+<region> sample=../layer/layer4.wav key=50 group=3 off_by=3 polyphony=4

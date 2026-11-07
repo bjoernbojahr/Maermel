@@ -1,0 +1,11 @@
+# Key 100 %: Resonanz bei Note 48/60/72/84 muss sich je Oktave verdoppeln (ca. 500 / 1000 / 2000 / 4000 Hz)
+set filtertype 2
+set cutoff 0.5663233347786729
+set reso 1
+set release 0.01
+set velrange 0
+set filterkey 1
+0.0 note 48 127 1.0
+1.2 note 60 127 1.0
+2.4 note 72 127 1.0
+3.6 note 84 127 1.0
