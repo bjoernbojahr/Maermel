@@ -1,6 +1,6 @@
 # Märmel
 
-<img width="1032" height="505" alt="Image" src="https://github.com/user-attachments/assets/dd24270d-08fe-49f4-9822-b0e31484d7ab" />
+<img width="1032" height="505" alt="Image" src="https://github.com/user-attachments/assets/c4e4c3a6-0b7d-49eb-8e89-03f09a1a9fce" />
 
 Märmel is a compact, RAM-based, stage-ready software sampler for instruments in SFZ format. Its user interface is simple, with only a few controls, yet it offers a great-sounding filter with drive and a set of well-designed modulation options that you can reach quickly – even during a live performance – to shape the sound with just a few clicks. And if you're into chip music or classic video game sounds: with KeyShift and Lo-Fi, you can bend even the highest-quality samples in that direction.
 
