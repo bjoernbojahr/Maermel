@@ -1,0 +1,14 @@
+.DS_Store
+Thumbs.db
+desktop.ini
+Builds/
+JuceLibraryCode/
+__pycache__/
+*.xcuserstate
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
