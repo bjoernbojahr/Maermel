@@ -18,6 +18,13 @@ For me, this is a dream come true. I wrote the first routines more than 20 years
 Technical overview of the source code (in German): see `inhalt.md`.
 
 
+## Feedback and contributing
+
+Märmel is a one-person project, developed in my spare time. Bug reports, feedback and ideas are very welcome – please use the issue templates on GitHub, and be patient: answers may take a while. Before contributing code, please read `CONTRIBUTING.md`.
+
+How to build Märmel and run the tests: see `BUILDING.md`.
+
+
 ## License
 
 Märmel – SFZ Sample Player
@@ -29,3 +36,4 @@ with additional terms under section 7 (attribution and name) – see `NOTICE.md`
 EXS24 and Logic are trademarks of Apple Inc. Märmel is not affiliated with Apple.
 
 The factory sounds are licensed under CC BY-SA 4.0. This license applies only to redistributing the sample files themselves. As the licensor, I additionally grant everyone permission to use the sounds – with or without Märmel – to create their own music, songs and commercial audio productions without any restrictions. Such works are not subject to CC BY-SA 4.0.
+
