@@ -3,8 +3,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and help
-    url: https://github.com/OWNER/REPO/discussions
+    url: https://github.com/bjoernbojahr/Maermel/discussions
     about: Installation, using Märmel, SFZ questions – please ask here instead of opening an issue.
   - name: Security problem
-    url: https://github.com/OWNER/REPO/security/advisories/new
+    url: https://github.com/bjoernbojahr/Maermel/security/advisories/new
     about: Please report security problems privately (see SECURITY.md), not as a public issue.
