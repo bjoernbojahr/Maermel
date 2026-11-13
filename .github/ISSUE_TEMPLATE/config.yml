@@ -1,0 +1,10 @@
+# Settings for the "New issue" page on GitHub.
+# blank_issues_enabled: false – only the templates in this folder are offered, no empty issue.
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/OWNER/REPO/discussions
+    about: Installation, using Märmel, SFZ questions – please ask here instead of opening an issue.
+  - name: Security problem
+    url: https://github.com/OWNER/REPO/security/advisories/new
+    about: Please report security problems privately (see SECURITY.md), not as a public issue.
