@@ -53,8 +53,6 @@ public:
 
     // Kennlinie der Zeitregler: Reglerstellung 0 ... 1 → 0 ... 10 s
     // Kennlinie der Zeitregler (Attack, Decay, Release, LFO-Delay; Glide mit 5 s): Zeit = Höchstwert × x^4,2.
-    // Bis 20.10.2026 x^4 wie beim EXS24 (Mitte 625 ms); auf Wunsch von Björn etwas steiler, Mitte jetzt 544 ms
-    // (10 % 0,63 ms, 30 % 64 ms, 70 % 2,24 s, 90 % 6,42 s). Bereich unverändert 0 … 10 s.
     static constexpr float kTimeCurveExponent = 4.2f;
     static float timeFromKnob (float x) noexcept
     {
