@@ -152,10 +152,10 @@ bool canOpen (const std::string& path)
 }
 
 // Sample-Pfade auflösen, mit eng begrenztem Rückgriff bei umbenannten Instrumenten (seit 22.10.2026):
-// Wurden „ottowaalkes.sfz“ und der Ordner „ottowaalkes Samples“ umbenannt (z. B. in „karldall“), ohne die Pfade in
+// Wurden „altname.sfz“ und der Ordner „altname Samples“ umbenannt (z. B. in „neuname“), ohne die Pfade in
 // der SFZ anzupassen, fehlen alle Samples. Nur dann wird der ERSTE Ordner des relativen Sample-Pfads ersetzt – erst
 // durch „<Instrument> Samples“, dann durch „<Instrument>“; Unterordner und Dateiname bleiben, wie sie sind
-// („ottowaalkes Samples/Light/c4.wav“ → „karldall Samples/Light/c4.wav“). Wird das Sample unter dem eigentlichen
+// („altname Samples/Light/c4.wav“ → „neuname Samples/Light/c4.wav“). Wird das Sample unter dem eigentlichen
 // Pfad gefunden, ändert sich nichts. Statt je Sample eine Meldung gibt es eine Zeile je umgeleitetem Ordner.
 class SamplePathResolver
 {
