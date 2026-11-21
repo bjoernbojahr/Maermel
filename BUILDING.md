@@ -13,7 +13,7 @@ This avoids problems with the "ä" in any operating system, DAW or file system.
 
 | What | Version |
 | --- | --- |
-| JUCE (with Projucer) | JUCE 9 – used under the GNU AGPL v3 |
+| JUCE (with Projucer) | JUCE 9.0.6 – used under the GNU AGPL v3 |
 | C++ standard | C++17 (no newer language features, no `std::filesystem`) |
 | macOS | Xcode 13 or later; deployment target macOS 10.11 |
 | Windows | Visual Studio 2022 or later |
@@ -154,9 +154,11 @@ engine sources – from the project folder, for example on macOS or Linux:
     g++ -std=c++17 -O2 -Wall -Wextra -ISource/engine -ISource \
         tests/stucktest.cpp Source/engine/*.cpp Source/engine/exs/*.cpp -o stucktest
 
-(On macOS `clang++` works the same way.) `texttest` needs only its own file:
+(On macOS `clang++` works the same way.) `texttest`, `lfotest` and `exsmixtest` need only one or two files:
 
     g++ -std=c++17 -O2 tests/texttest.cpp -o texttest
+    g++ -std=c++17 -O2 -ISource/engine tests/lfotest.cpp -o lfotest
+    g++ -std=c++17 -O2 -ISource/engine tests/exsmixtest.cpp Source/engine/exs/SFZWriter.cpp -o exsmixtest
 
 Run the programs from inside the `tests` folder, so the relative sample paths of the test instruments
 are found:
@@ -169,6 +171,8 @@ are found:
 | `texttest` | typing values into the value fields | `texttest` |
 | `headertest` | reading root key and loop directly from WAV/AIFF headers, compared with full loading | `headertest doppelchunks/*.wav doppelchunks/*.aif` |
 | `veltest` | velocity curves and offsets | `veltest` |
+| `lfotest` | LFO after switching Env Mode on and off (must swing freely again) | `lfotest` |
+| `exsmixtest` | EXS import: group and zone values combined correctly (ranges, volume, pan) | `exsmixtest` |
 | `locatortest` | finding an instrument of a DAW project on another computer | `locatortest` |
 | `exporttest` | "Export instrument…" (rewrite SFZ, collect samples) | `exporttest instrument.sfz targetfolder name` |
 | `sfzrender` | plays an SFZ file from an event list and writes a WAV file – to listen to the engine without a DAW | `sfzrender xfade/xfade-test.sfz xfade/ev-pedal.txt out.wav` |
