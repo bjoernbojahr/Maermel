@@ -7,6 +7,7 @@
 
 #include "SettingsDialog.h"
 #include "ParameterControl.h"
+#include "FileDialogs.h"
 
 #include <cmath>
 #include <iterator>
@@ -42,7 +43,6 @@ constexpr int kOffId = 1;
 int idForValue (int v)  { return v < 0 ? kOffId : v + 2; }
 int valueForId (int id) { return id <= kOffId ? -1 : id - 2; }
 
-juce::String utf8 (const char* text) { return juce::String::fromUTF8 (text); }
 } // namespace
 
 SettingsComponent::SettingsComponent (MaermelAudioProcessor& p)
@@ -60,7 +60,8 @@ SettingsComponent::SettingsComponent (MaermelAudioProcessor& p)
     libraryButton.onClick = [this]
     {
         fileChooser = std::make_unique<juce::FileChooser> ("Choose library folder",
-                                                           audioProcessor.library->getRootFolder());
+                                                           audioProcessor.library->getRootFolder(), juce::String(),
+                                                           maermel::kUseNativeFileDialogs);   // Linux: siehe FileDialogs.h
         juce::Component::SafePointer<SettingsComponent> safe (this);
         fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                                   [safe] (const juce::FileChooser& chooser)
@@ -116,7 +117,8 @@ SettingsComponent::SettingsComponent (MaermelAudioProcessor& p)
     editorChoose.onClick = [this]
     {
         fileChooser = std::make_unique<juce::FileChooser> ("Choose an application for editing SFZ files",
-                                                           juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory));
+                                                           juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory),
+                                                           juce::String(), maermel::kUseNativeFileDialogs);
         juce::Component::SafePointer<SettingsComponent> safe (this);
         fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                                   [safe] (const juce::FileChooser& chooser)
@@ -168,7 +170,8 @@ SettingsComponent::SettingsComponent (MaermelAudioProcessor& p)
         const juce::File start = current != juce::File()
                                    ? current
                                    : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Maermel-Log.txt");
-        fileChooser = std::make_unique<juce::FileChooser> ("Choose or create a text file for the log", start, "*.txt;*.log");
+        fileChooser = std::make_unique<juce::FileChooser> ("Choose or create a text file for the log", start, "*.txt;*.log",
+                                                           maermel::kUseNativeFileDialogs);
         juce::Component::SafePointer<SettingsComponent> safe (this);
         fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
                                   [safe] (const juce::FileChooser& chooser)
