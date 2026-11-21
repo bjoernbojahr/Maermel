@@ -4,11 +4,13 @@
 // Additional terms under section 7 of the license (attribution, name): see NOTICE.md
 //
 // PluginEditor.cpp – Märmel
-// Finales Design. Positionen in Punkten wie in der abgestimmten Stilprobe (tools/stilprobe_zeichnen.py).
+// Finales Design. Positionen in Punkten wie in der abgestimmten Stilprobe (tools/stilprobe_zeichnen.py, internes Hilfsskript – nicht im öffentlichen Repository).
 
 #include "PluginEditor.h"
 #include "ParameterControl.h"
 #include "ParameterIds.h"
+#include "FileDialogs.h"
+#include "ExternalLaunch.h"
 
 #include <cmath>
 #include <cstring>
@@ -761,8 +763,8 @@ void MaermelAudioProcessorEditor::menuItemChosen (int result)
     else if (result == kOpenLibraryItem)
     {
         const juce::File root = library->getRootFolder();
-        // Ein Ordner als "Programm" gestartet öffnet sich im Finder (Mac) bzw. Explorer (Windows)
-        if (! (root.isDirectory() && root.startAsProcess()))
+        // Finder (Mac), Explorer (Windows), Dateimanager über xdg-open (Linux) – siehe ExternalLaunch.h
+        if (! maermel::external::openFolder (root))
             showStatus ("LIBRARY FOLDER NOT FOUND");
     }
     else if (result >= kFirstFileItem && result - kFirstFileItem < menuFiles.size())
@@ -865,7 +867,8 @@ void MaermelAudioProcessorEditor::toggleSettings()
 void MaermelAudioProcessorEditor::chooseFile()
 {
     fileChooser = std::make_unique<juce::FileChooser> ("Load instrument or preset", audioProcessor.getInstrumentFile(),
-                                                       library->isShowingExs() ? "*.sfz;*.sfzp;*.exs" : "*.sfz;*.sfzp");
+                                                       library->isShowingExs() ? "*.sfz;*.sfzp;*.exs" : "*.sfz;*.sfzp",
+                                                       maermel::kUseNativeFileDialogs);   // Linux: siehe FileDialogs.h
     const auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
     juce::Component::SafePointer<MaermelAudioProcessorEditor> safe (this);
@@ -887,7 +890,8 @@ void MaermelAudioProcessorEditor::exportInstrument()
         start = library->getRootFolder();
     const juce::File suggestion = start.getChildFile (audioProcessor.getInstrumentFile().getFileNameWithoutExtension() + ".sfz");
 
-    fileChooser = std::make_unique<juce::FileChooser> ("Export instrument with samples", suggestion, "*.sfz");
+    fileChooser = std::make_unique<juce::FileChooser> ("Export instrument with samples", suggestion, "*.sfz",
+                                                       maermel::kUseNativeFileDialogs);
     juce::Component::SafePointer<MaermelAudioProcessorEditor> safe (this);
     const int flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                     | juce::FileBrowserComponent::warnAboutOverwriting;
