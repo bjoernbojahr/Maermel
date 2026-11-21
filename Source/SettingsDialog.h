@@ -89,8 +89,7 @@ private:
     juce::TextButton logChoose { "Set ..." }, logClear { "Remove" };
     juce::ToggleButton logErrors;
     void updateLogControls();
-    static juce::String utf8Label (const char* text) { return juce::String::fromUTF8 (text); }
-
+    
     // Velocity-Kurve für das eigene Masterkeyboard (global) mit kleiner Kurvenanzeige
     struct CurveView : public juce::Component
     {
