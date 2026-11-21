@@ -116,15 +116,27 @@ float Synth::crushBits (float amount) noexcept
 }
 
 // Stufe der Ratenreduktion aus der Bittiefe: dieselbe Kennlinie wie bisher (bezogen auf 44,1 kHz), aber auf die
-// nächste ganze oder halbe Haltelänge gerundet (1½ … 4). Damit gilt bei jeder DAW-Samplerate dasselbe Teilungs-
+// nächste ganze oder halbe Haltelänge gerundet (1½ … 4). Damit gilt bei 44,1 und 48 kHz dasselbe Teilungs-
 // verhältnis: 44,1 kHz → 29,4 / 22,05 / 17,64 / 14,7 / 12,6 / 11,025 kHz; 48 kHz → 32 / 24 / 19,2 / 16 / 13,7 / 12 kHz.
-int Synth::crushHoldStage (float bits) noexcept
+//
+// Hohe Sampleraten (seit 19.11.2026): Bei 88,2/96 kHz wird die Haltelänge verdoppelt, bei 176,4/192 kHz
+// vervierfacht. Vorher galt dort dieselbe Haltelänge wie bei 44,1 kHz – Lo-Fi 100 % ergab bei 96 kHz also 24 kHz
+// statt 12 kHz und war kaum zu hören. Jetzt klingt Lo-Fi bei jeder Samplerate gleich; bei 44,1/48 kHz ändert
+// sich nichts (bitgenau wie bisher). CrushChain zählt in halben Samples und verträgt jede Haltelänge.
+int Synth::crushHoldStage (float bits, double sampleRate) noexcept
 {
     const float hold = 44100.0f / Synth::crushRateHz (bits);
     const int half = (int) std::lround (hold * 2.0f);
     if (half < 3)
         return 0;                                         // unter 1½: keine Ratenreduktion (nur Bittiefe)
-    return std::min (half, 8);                            // höchstens Haltelänge 4
+
+    int factor = 1;                                       // 44,1 / 48 kHz (und darunter)
+    if (sampleRate >= 176000.0)
+        factor = 4;                                       // 176,4 / 192 kHz
+    else if (sampleRate >= 88000.0)
+        factor = 2;                                       // 88,2 / 96 kHz
+
+    return std::min (half, 8) * factor;                   // höchstens Haltelänge 4 (× Faktor)
 }
 
 float Synth::crushRateHz (float bits) noexcept
@@ -167,7 +179,7 @@ void Synth::applyCrushAmount (float amount) noexcept
     const float bits = crushBits (amount);
     crushLevels = std::pow (2.0f, bits - 1.0f);
     crushInverse = 1.0f / crushLevels;
-    crushHalfHold = crushHoldStage (bits);
+    crushHalfHold = crushHoldStage (bits, sampleRate);
     crushRate = crushHalfHold > 0 ? (float) (sampleRate * 2.0 / crushHalfHold) : 0.0f;
 
 }
