@@ -142,8 +142,9 @@ public:
     bool chorusPaused() const noexcept             { return chorus.isCurrentlyPaused(); }   // für Tests
     static float crushBits (float amount) noexcept;
     static float crushRateHz (float bits) noexcept;
-    // Raten-Stufe als Haltelänge in halben Samples (0 = keine Ratenreduktion, 3 … 8 = 1½ … 4); Rate = Samplerate × 2 / Stufe
-    static int crushHoldStage (float bits) noexcept;
+    // Raten-Stufe als Haltelänge in halben Samples (0 = keine Ratenreduktion, 3 … 8 = 1½ … 4); Rate = Samplerate × 2 / Stufe.
+    // Bei 88,2/96 kHz doppelt, bei 176,4/192 kHz vierfach so lang (gleicher Klang bei jeder Samplerate).
+    static int crushHoldStage (float bits, double sampleRate) noexcept;
 
     // Nur für Tests: Bittiefe und Samplerate direkt setzen (statt über den Crush-Knopf); 0 = aus
     void setCrushDirect (float bits, float rateHz) noexcept;   // nur für Messungen (ohne Glättung)
