@@ -183,10 +183,16 @@ namespace bjchorus
         // Einen Schritt weiter (einmal pro Sample aufrufen)
         float next()
         {
+            const float previous = current;
             current = target + coefficient * (current - target);
 
-            // Am Ende "einrasten", damit der Wert nicht ewig minimal schwankt
-            if (std::fabs(current - target) < 1.0e-6f)
+            // Am Ende "einrasten", damit der Wert nicht ewig minimal schwankt.
+            // Zweite Bedingung (seit 19.11.2026): Bei langer Glättung und einem Ziel um 1,0 wird der Schritt
+            // irgendwann kleiner als die Rechengenauigkeit von float – der Wert bleibt dann z. B. bei 0,99997
+            // stehen und erreicht das Ziel nie. Der Chorus galt dadurch nie als ausgeblendet, und nach dem
+            // Umschalten Chorus → Lo-Fi blieb Lo-Fi stumm (Fehlerbericht Björn). Bewegt sich der Wert nicht
+            // mehr, springt er deshalb direkt auf das Ziel (Unterschied unhörbar, hier etwa 0,0002 dB).
+            if (current == previous || std::fabs(current - target) < 1.0e-6f)
                 current = target;
 
             return current;
