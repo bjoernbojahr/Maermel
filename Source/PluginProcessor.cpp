@@ -17,6 +17,7 @@
 #include "engine/InstrumentLocator.h"
 #include "engine/FileUtil.h"
 #include <set>
+#include "ExternalLaunch.h"
 #include "AboutPanel.h"   // Build-Angaben für das Logfile (wie in der About-Box)
 
 #include <cmath>
@@ -207,11 +208,12 @@ juce::String crushText (float v, int)
         return juce::String (juce::roundToInt (v)) + " %";
     // Bittiefe und Samplerate, z. B. "11.7 bit/12.6 kHz"
     const float bits = maermel::Synth::crushBits (v);
-    const int stage = maermel::Synth::crushHoldStage (bits);
+    const double sampleRate = displaySampleRate.load();
+    const int stage = maermel::Synth::crushHoldStage (bits, sampleRate);
     juce::String text = juce::String (bits, 1) + " bit";
     if (stage > 0)
     {
-        const float khz = (float) (displaySampleRate.load() * 2.0 / stage / 1000.0);
+        const float khz = (float) (sampleRate * 2.0 / stage / 1000.0);
         text << "/" << (khz < 20.0f ? juce::String (khz, 1) : juce::String (juce::roundToInt (khz))) << " kHz";   // kompakt fürs Display
     }
     return text;
@@ -466,7 +468,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
     };
     auto parseSustainTime    = [] (const juce::String& t) { return maermel::parse::sustainTime (plain (t), 0.0f); };
     auto parsePercentZero    = [] (const juce::String& t) { return maermel::parse::percent (plain (t), 0.0f); };
-    for (const juce::String prefix : { juce::String(), juce::String ("f") })
+    for (const juce::String& prefix : { juce::String(), juce::String ("f") })
     {
         const juce::String name = prefix.isEmpty() ? "Amp " : "Filter ";
         // VelA / VelD: Anteil der Zeit bei Velocity 127 an der Zeit bei Velocity 1 (100 % = keine Velocity-Wirkung).
@@ -1322,6 +1324,14 @@ bool MaermelAudioProcessor::openInEditorInternal (juce::String& message)
    #endif
         args = { editor.getFullPathName(), file.getFullPathName() };
 
+   #if JUCE_LINUX || JUCE_BSD
+    // Linux: eigener Start ohne fork() und ohne die Bibliothekspfade des Hosts (siehe ExternalLaunch.h)
+    if (! maermel::external::startProgram (args))
+    {
+        message = "Could not start the editor";
+        return false;
+    }
+   #else
     // Das Programm läuft unabhängig weiter; das ChildProcess-Objekt beendet es nicht
     editorProcess = std::make_unique<juce::ChildProcess>();
     if (! editorProcess->start (args, 0))
@@ -1329,6 +1339,7 @@ bool MaermelAudioProcessor::openInEditorInternal (juce::String& message)
         message = "Could not start the editor";
         return false;
     }
+   #endif
     return true;
 }
 
