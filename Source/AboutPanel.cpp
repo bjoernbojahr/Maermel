@@ -10,6 +10,7 @@
 // Xcode-Exporter als "Pre-Build Shell Script" eintragen:   touch "$PROJECT_DIR/../../Source/AboutPanel.cpp"
 
 #include "AboutPanel.h"
+#include "ExternalLaunch.h"
 #include "MaermelLook.h"
 #include "LicenseTexts.h"
 
@@ -53,6 +54,12 @@ AboutPanel::AboutPanel (juce::AudioProcessor::WrapperType wrapperType)
 
     link.setFont (labelFont (12.0f), false, juce::Justification::centred);
     link.setColour (juce::HyperlinkButton::textColourId, colours::cyan);
+   #if JUCE_LINUX || JUCE_BSD
+    // Linux: nicht JUCEs eigenen Start benutzen (fork, Bibliothekspfade des Hosts) – siehe ExternalLaunch.h.
+    // Ohne gültige URL tut der HyperlinkButton beim Klick selbst nichts; onClick öffnet die Seite.
+    link.setURL (juce::URL());
+    link.onClick = [] { maermel::external::openUrl ("https://www.bjoernbojahr.de"); };
+   #endif
     addAndMakeVisible (link);
 
     // Lizenzhinweise: unten, scrollbar, nur lesbar
