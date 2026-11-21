@@ -156,8 +156,16 @@ public:
                                        : params.sustainLevel * sustainGain;
 
                 // Decay folgt dem (ggf. wandernden) Ziel; im Sustain gleiten Änderungen in ~20 ms
+                const float previous = level;
                 level = target + (level - target) * (stage == Stage::Decay ? decayCoeff : sustainCoeff);
-                if (stage == Stage::Decay && std::fabs (level - target) < 1.0e-5f)
+
+                // Decay → Sustain, sobald das Ziel erreicht ist. Zweite Bedingung (seit 20.11.2026): Bei langem Decay
+                // wird der Schritt pro Sample irgendwann kleiner als die Rechengenauigkeit von float, und der Pegel
+                // bleibt knapp neben dem Ziel stehen (z. B. Decay 10 s bei 44,1 kHz: 0,006 darüber). Ohne diese
+                // Bedingung blieb die Hüllkurve dann für immer im Decay, und eine Änderung am Sustain-Regler wirkte
+                // während der gehaltenen Note mit der langsamen Decay-Zeit statt in ~20 ms. Im Sustain gleitet der
+                // Pegel den kleinen Rest dann weich ans Ziel (kein Sprung).
+                if (stage == Stage::Decay && (std::fabs (level - target) < 1.0e-5f || level == previous))
                     stage = Stage::Sustain;
 
                 if (params.sustainTimeSeconds < 0.0f && level < 1.0e-6f && target < 1.0e-6f)
