@@ -18,6 +18,8 @@ namespace
 {
 juce::String noteName (int note)
 {
+    if (note < 0 || note > 127)
+        return "-";                               // außerhalb des MIDI-Bereichs (note % 12 wäre sonst negativ)
     static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     return juce::String (names[note % 12]) + juce::String (note / 12 - 1);
 }
