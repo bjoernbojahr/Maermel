@@ -7,7 +7,7 @@
               pluginName="Maermel" pluginDesc="SFZ Player" pluginVST3Category="Sampler"
               pluginCode="Bjsp" pluginManufacturerCode="BJBO" pluginManufacturer="Bjoern Bojahr"
               aaxIdentifier="de.bjoernbojahr.Maermel" bundleIdentifier="de.bjoernbojahr.Maermel"
-              cppLanguageStandard="17" version="1.0.1" pluginFormats="buildVST3,buildAU,buildStandalone,buildLV2"
+              cppLanguageStandard="17" version="1.0.2" pluginFormats="buildVST3,buildAU,buildStandalone,buildLV2"
               lv2Uri="https://www.bjoernbojahr.de/plugins/maermel">
   <MAINGROUP id="yYA7hr" name="Maermel">
     <GROUP id="{EBA303C1-BADA-88B4-4218-9EBC00B43BBB}" name="Resources">
