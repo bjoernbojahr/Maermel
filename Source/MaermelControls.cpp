@@ -30,7 +30,7 @@ void InstrumentDisplay::setText (const juce::String& newText, juce::Colour colou
 void InstrumentDisplay::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
-    drawGlass (g, r, 4.0f);
+    drawGlass (g, r, 4.0f, 3.0f);   // große Anzeige: breiterer dunkler Rand oben
     const float top = (r.getHeight() - glyphHeight (g)) * 0.5f;
     if (showArrows)
     {
@@ -65,11 +65,23 @@ ValueBox::~ValueBox()
     slider.removeListener (this);
 }
 
+juce::String ValueBox::currentText()
+{
+    return format ? format (slider) : slider.getTextFromValue (slider.getValue());
+}
+
+void ValueBox::refresh()
+{
+    if (currentText() != lastText)
+        repaint();                           // paint merkt sich den neuen Text
+}
+
 void ValueBox::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
     drawGlass (g, r, 2.0f);
-    const juce::String text = format ? format (slider) : slider.getTextFromValue (slider.getValue());
+    const juce::String text = currentText();
+    lastText = text;
     DotText::draw (g, text, r.getCentreX(), (r.getHeight() - glyphHeight (g)) * 0.5f, juce::Justification::centred,
                    r.getWidth() - 4.0f);
 }
