@@ -4,8 +4,9 @@
 // Additional terms under section 7 of the license (attribution, name): see NOTICE.md
 //
 // PluginEditor.h – Märmel
-// Finales Design nach der abgestimmten Stilprobe (Konzeptpapier, Abschnitt „GUI-Entwurf“).
-// Fenster 1032 × 505 Punkte. Alle Positionen entsprechen tools/stilprobe_zeichnen.py.
+// Finales Design nach der abgestimmten Stilprobe (Konzeptpapier, Abschnitt „GUI-Entwurf“ – internes Dokument).
+// Fenster 1032 × 505 Punkte. Alle Positionen entsprechen tools/stilprobe_zeichnen.py (internes Hilfsskript –
+// nicht im öffentlichen Repository).
 
 #pragma once
 
