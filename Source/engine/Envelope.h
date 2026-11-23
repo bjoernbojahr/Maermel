@@ -51,8 +51,8 @@ public:
         void setDecay (float s) noexcept  { decaySeconds = decaySecondsVel1 = s; }
     };
 
-    // Kennlinie der Zeitregler: Reglerstellung 0 ... 1 → 0 ... 10 s
-    // Kennlinie der Zeitregler (Attack, Decay, Release, LFO-Delay; Glide mit 5 s): Zeit = Höchstwert × x^4,2.
+    // Kennlinie der Zeitregler (Attack, Decay, Release, LFO-Delay; Glide mit 5 s): Reglerstellung 0 ... 1 →
+    // Zeit = Höchstwert × x^4,2 (Höchstwert hier 10 s).
     static constexpr float kTimeCurveExponent = 4.2f;
     static float timeFromKnob (float x) noexcept
     {
@@ -85,12 +85,22 @@ public:
         updateCoefficients();
     }
 
-    // Beim Anschlag: Velocity (1 ... 127) und Note (inkl. C.Tune) für Velocity- und Key-Zeiten
     static constexpr float kMinReleaseSeconds = 0.004f;
 
+    // Beim Anschlag: Velocity (1 ... 127) und Note (inkl. C.Tune) für Velocity- und Key-Zeiten
     void setVoiceContext (int velocity, int note) noexcept
     {
         velocityPosition = velocityResponse (velocity);   // Standard-Velocity-Kurve
+        keyNote = note;
+        updateCoefficients();
+    }
+
+    // Beim Anschlag beides zusammen: Regler und Velocity/Note – die Koeffizienten werden nur einmal berechnet
+    // (setParams und setVoiceContext nacheinander rechneten sie zweimal). Ergebnis gleich wie beide einzeln.
+    void setParamsAndContext (const Params& p, int velocity, int note) noexcept
+    {
+        params = p;
+        velocityPosition = velocityResponse (velocity);
         keyNote = note;
         updateCoefficients();
     }
@@ -211,6 +221,13 @@ public:
     }
 
     bool isActive() const noexcept   { return stage != Stage::Idle; }
+
+    // Sustain-Phase ohne hörbaren Pegel und ohne Aussicht auf Anstieg: Sustain-Regler auf 0 (dann ist auch das Ziel
+    // von T immer 0) und Pegel unter −100 dB. Benutzt für vom Pedal gehaltene Stimmen (seit 23.11.2026, siehe Synth).
+    bool isSilentSustain() const noexcept
+    {
+        return stage == Stage::Sustain && params.sustainLevel <= 0.0f && level < 1.0e-5f;
+    }
     bool isReleasing() const noexcept { return stage == Stage::Release; }
     float currentLevel() const noexcept { return level; }
 
