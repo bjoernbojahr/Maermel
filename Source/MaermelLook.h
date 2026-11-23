@@ -48,7 +48,9 @@ void drawLabel (juce::Graphics& g, const juce::String& text, float x, float y, f
 void drawFrame (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& title);
 
 // Schwarzes „Plastikglas“ (Displays, Wertefelder, Tastengruppen)
-void drawGlass (juce::Graphics& g, juce::Rectangle<float> r, float radius);
+// Anzeige-Glas. topEdge: Höhe (Punkte) des dunklen Rands oben innen, unter dem der Glanz beginnt (seit 23.11.2026,
+// nach Björns Skizze): 1 für die kleinen Wertefelder, 2 für die Stimmenwahl, 3 für die Instrument-Anzeige.
+void drawGlass (juce::Graphics& g, juce::Rectangle<float> r, float radius, float topEdge = 1.0f);
 
 // Rote LED (an/aus) mit Leuchten
 void drawLed (juce::Graphics& g, juce::Point<float> centre, bool on, float radius = 3.2f);
