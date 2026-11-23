@@ -57,13 +57,19 @@ public:
     void resized() override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
+    // Neu zeichnen nur, wenn sich der angezeigte Text geändert hat (für den regelmäßigen Timer des Editors).
+    // Der Textvergleich ist billig, das Neuzeichnen (Glas, Punktmatrix) teuer.
+    void refresh();
+
 private:
     void sliderValueChanged (juce::Slider*) override { repaint(); }
     void finishEditing (bool apply);
+    juce::String currentText();
 
     juce::Slider& slider;
     std::function<juce::String (juce::Slider&)> format;
     std::unique_ptr<juce::TextEditor> editor;
+    juce::String lastText;                   // zuletzt gezeichneter Text (für refresh)
 };
 
 // ---------------------------------------------------------------------------
