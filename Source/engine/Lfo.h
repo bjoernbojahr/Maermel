@@ -111,13 +111,7 @@ public:
         }
         else
         {
-            // Faktor hängt nur von der Blocklänge ab (fast immer 16 Samples): nur bei Änderung neu berechnen
-            if (seconds != smoothingSeconds)
-            {
-                smoothingSeconds = seconds;
-                smoothingK = 1.0f - std::exp (-seconds / kSmoothingSeconds);
-            }
-            const float k = smoothingK;
+            const float k = smoothingFactor (seconds);
             smoothed += (target - smoothed) * k;
             smoothedVolume += (volumeTarget - smoothedVolume) * k;
         }
@@ -179,8 +173,28 @@ private:
     float smoothed = 0.0f;
     float smoothedVolume = 0.0f;
     bool smoothingPrimed = false;
-    float smoothingSeconds = -1.0f;   // Blocklänge, für die smoothingK gilt (-1 = noch nicht berechnet)
-    float smoothingK = 0.0f;
+    // Glättungsfaktor je Blocklänge. Die Blöcke sind fast immer 16 Samples lang, werden aber an jedem MIDI-Ereignis
+    // geteilt – die Länge wechselt dann ständig zwischen 16 und einem Rest. Zwei gemerkte Werte (der zuletzt benutzte
+    // vorn) ersparen dabei das std::exp je Stimme und Block (seit 23.11.2026; vorher nur ein gemerkter Wert).
+    float smoothingSeconds = -1.0f, smoothingK = 0.0f;            // zuletzt benutzt (-1 = noch nicht berechnet)
+    float smoothingSeconds2 = -1.0f, smoothingK2 = 0.0f;          // davor benutzt
+
+    float smoothingFactor (float seconds) noexcept
+    {
+        if (seconds == smoothingSeconds)
+            return smoothingK;
+        if (seconds == smoothingSeconds2)
+        {
+            std::swap (smoothingSeconds, smoothingSeconds2);      // nach vorn holen
+            std::swap (smoothingK, smoothingK2);
+            return smoothingK;
+        }
+        smoothingSeconds2 = smoothingSeconds;                      // bisherigen nach hinten, neuen vorn berechnen
+        smoothingK2 = smoothingK;
+        smoothingSeconds = seconds;
+        smoothingK = 1.0f - std::exp (-seconds / kSmoothingSeconds);
+        return smoothingK;
+    }
 };
 
 } // namespace maermel
