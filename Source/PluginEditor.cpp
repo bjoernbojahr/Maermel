@@ -61,6 +61,8 @@ constexpr bool kMenusInsidePluginWindow = true;
 // Notenname nach SFZ-Zählung (C4 = 60), z. B. 34 → "A#1"
 juce::String noteName (int note)
 {
+    if (note < 0 || note > 127)
+        return "-";                               // außerhalb des MIDI-Bereichs (note % 12 wäre sonst negativ)
     static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     return juce::String (names[note % 12]) + juce::String (note / 12 - 1);
 }
@@ -578,17 +580,18 @@ void MaermelAudioProcessorEditor::timerCallback()
     // Export im Hintergrund: Fortschritt und Ergebnis im Display
     {
         const auto status = audioProcessor.getExportStatus();
-        if (status.state == 1 && status.done != shownExportDone && status.total > 0)
+        using Proc = MaermelAudioProcessor;
+        if (status.state == Proc::exportRunning && status.done != shownExportDone && status.total > 0)
             showStatus ("EXPORT " + juce::String (status.done) + "/" + juce::String (status.total));
         if (status.state != shownExportState)
         {
-            if (status.state == 2)
+            if (status.state == Proc::exportFinished)
                 showStatus ("EXPORTED " + audioProcessor.getExportMessage().toUpperCase());
-            else if (status.state == 3)
+            else if (status.state == Proc::exportFailed)
                 showAlert ("EXPORT FAILED - SEE LOG");
         }
         shownExportState = status.state;
-        shownExportDone = status.state == 1 ? status.done : -1;
+        shownExportDone = status.state == Proc::exportRunning ? status.done : -1;
     }
 
     // LED über AT→WHEEL: Zustand kommt auch aus geladenen Presets (Instrumentwechsel)
@@ -659,8 +662,10 @@ void MaermelAudioProcessorEditor::timerCallback()
     }
 
     refreshDisplay();
-    for (auto& box : valueBoxes)   // LFO-Rate hängt zusätzlich von Sync/Invert ab
-        box->repaint();
+    // LFO-Rate hängt zusätzlich von Sync/Invert ab, daher regelmäßig prüfen. Neu gezeichnet wird nur ein Feld,
+    // dessen Text sich wirklich geändert hat (spart auf älteren Rechnern Zeichenarbeit, 20-mal pro Sekunde).
+    for (auto& box : valueBoxes)
+        box->refresh();
 }
 
 // ===========================================================================
@@ -1203,7 +1208,7 @@ void MaermelAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawImage (background, getLocalBounds().toFloat());
 
     // ---------------- Kopfzeile ----------------
-    drawGlass (g, { 122.0f + kGx, 13.0f, 235.0f, 30.0f }, 4.0f);
+    drawGlass (g, { 122.0f + kGx, 13.0f, 235.0f, 30.0f }, 4.0f, 2.0f);   // Stimmenwahl: dunkler Rand oben 2 Punkte (Skizze)
     drawLed (g, { 743.5f + kBx, 9.0f }, fixButton.getToggleState());
     drawLed (g, { kAtWheelButton.getCentreX(), 9.0f }, atWheelButton.getToggleState());   // AT→WHEEL je Instrument
     drawLed (g, { 878.0f, 9.0f }, audioProcessor.isLiveEditActive());   // über EDIT: Live-Edit-Überwachung läuft
