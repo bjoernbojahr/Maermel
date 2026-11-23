@@ -83,6 +83,10 @@ public:
         const Mix target = mixFor (type);
         if (type == currentType && fade >= 1.0f)
             return;
+        // Aus „kein Filter“ heraus (seit 23.11.2026): Im Bypass wurde der Zustand nicht weitergerechnet und stammt
+        // noch aus der Zeit vor dem Abschalten. Löschen, damit beim Einblenden kein alter Rest der Resonanz hörbar wird.
+        if (isBypassed())
+            reset();
         previous = blendedMix();       // von der aktuellen Mischung aus überblenden
         current = target;
         currentType = type;
@@ -132,16 +136,40 @@ public:
         return 4.3f * (1.0f - std::exp (-2.0f * feedback)) - 7.0f * std::max (0.0f, feedback - 3.6f);
     }
 
+    // Alles, was nur von der Resonanz abhängt – für alle Stimmen gleich, daher einmal je Block statt je Stimme
+    // berechnet (seit 23.11.2026; vorher je Stimme und bei Stereo zweimal: sin, 2 × pow, exp2, 2 × exp).
+    struct ResonanceInfo
+    {
+        float k = 0.0f;              // Rückkopplung
+        float shiftFactor = 1.0f;    // Verschiebung der Grenzfrequenz als Faktor
+        float gain = 1.0f;           // Pegelanhebung (linear)
+    };
+
+    static ResonanceInfo resonanceInfo (float resonance) noexcept
+    {
+        ResonanceInfo info;
+        info.k = feedbackForResonance (resonance);
+        // Mit Resonanz rückt die Grenzfrequenz etwas nach oben (bei hoher Resonanz weniger, siehe
+        // resonanceShiftScale), und der Pegel wird angehoben (aus den Messungen an Dreieck/LP24 abgeleitet)
+        info.shiftFactor = std::exp2 (resonanceShiftScale (resonance) * resonanceCutoffShift (info.k));
+        info.gain = std::pow (10.0f, resonanceGainDecibels (info.k) / 20.0f);
+        return info;
+    }
+
     // Grenzfrequenz in Hz und Resonanz 0 ... 1 (bei 1 kräftige Resonanz, aber keine Selbstoszillation).
     // Wird in kleinen Blöcken aufgerufen, nicht zwingend pro Sample.
     void setCutoffAndResonance (float hz, float resonance) noexcept
     {
-        k = feedbackForResonance (resonance);
+        setCutoff (hz, resonanceInfo (resonance));
+    }
 
-        // Mit Resonanz rückt die Grenzfrequenz etwas nach oben (bei hoher Resonanz weniger, siehe
-        // resonanceShiftScale), und der Pegel wird angehoben (aus den Messungen an Dreieck/LP24 abgeleitet)
-        hz *= std::exp2 (resonanceShiftScale (resonance) * resonanceCutoffShift (k));
-        resonanceGain = std::pow (10.0f, resonanceGainDecibels (k) / 20.0f);
+    // Wie setCutoffAndResonance, aber mit fertig berechneten Resonanzwerten (siehe resonanceInfo).
+    // Gleiche Rechenschritte in gleicher Reihenfolge – das Ergebnis ist bitgenau dasselbe.
+    void setCutoff (float hz, const ResonanceInfo& res) noexcept
+    {
+        k = res.k;
+        hz *= res.shiftFactor;
+        resonanceGain = res.gain;
 
         const float maxHz = (float) (sampleRate * 0.45);
         hz = std::min (maxHz, std::max (10.0f, hz));
@@ -157,6 +185,18 @@ public:
         c2 = G * oneMinusG;
         c3 = oneMinusG;
         inverseDenominator = 1.0f / (1.0f + k * G4);
+    }
+
+    // Stereo: Das rechte Filter bekommt dieselben Koeffizienten wie das linke (nicht Zustand, Typ oder Überblendung)
+    void copyCoefficientsFrom (const Filter& o) noexcept
+    {
+        k = o.k;
+        resonanceGain = o.resonanceGain;
+        G = o.G;
+        oneMinusG = o.oneMinusG;
+        G4 = o.G4;
+        c0 = o.c0; c1 = o.c1; c2 = o.c2; c3 = o.c3;
+        inverseDenominator = o.inverseDenominator;
     }
 
     // compensation 0 ... 1: gleicht den Pegelverlust bei hoher Resonanz aus (Tiefpass)
@@ -182,7 +222,9 @@ public:
         // Typ-Mischung (mit Überblendung beim Umschalten)
         if (fade < 1.0f)
             fade = std::min (1.0f, fade + fadeStep);
-        const Mix m = blendedMix();
+        // Ohne laufende Überblendung die Mischung direkt nehmen (spart 12 Multiplikationen je Sample; Überblendungen
+        // gibt es nur 5 ms lang beim Umschalten). Ergebnis gleich: bei fade = 1 ist blendedMix() == current.
+        const Mix m = (fade < 1.0f) ? blendedMix() : current;
         const float out = m.dry * x + m.input * u + m.s1 * y[0] + m.s2 * y[1] + m.s3 * y[2] + m.s4 * y[3];
 
         // Pegelausgleich bei Resonanz (die Rückkopplung senkt die Bässe um 1/(1+k))
