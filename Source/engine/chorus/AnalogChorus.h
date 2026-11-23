@@ -70,7 +70,9 @@ namespace bjchorus
         double outputDb;        // Pegelausgleich für das GESAMTE Signal (trocken + Effekt), 0 = keiner
     };
 
-    static const ChorusCurvePoint kChorusCurve[] =
+    // inline constexpr (C++17): genau eine Kopie im ganzen Programm, auch wenn mehrere .cpp-Dateien den Header
+    // einbinden (vorher static const: eine Kopie je Datei)
+    inline constexpr ChorusCurvePoint kChorusCurve[] =
     {
         //  Knopf   Rate    Filter     Effekt   Ausgleich
         {     0.0,  0.38,  16000.0,  -100.0,     0.0 },
@@ -81,7 +83,7 @@ namespace bjchorus
         {   100.0,  0.99,  12000.0,     2.0,    -2.9 },
     };
 
-    static const int kChorusCurveSize = static_cast<int>(sizeof(kChorusCurve) / sizeof(kChorusCurve[0]));
+    inline constexpr int kChorusCurveSize = static_cast<int>(sizeof(kChorusCurve) / sizeof(kChorusCurve[0]));
 
     //--------------------------------------------------------------------------
     // Feste Werte (unabhängig von der Knopfstellung)
