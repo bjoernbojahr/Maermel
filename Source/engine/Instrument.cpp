@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace maermel
@@ -27,13 +28,7 @@ std::string directoryOf (const std::string& path)
     return slash == std::string::npos ? std::string() : path.substr (0, slash + 1);
 }
 
-// "/Users/..." (macOS) oder "C:/..." (Windows): nicht relativ zur SFZ-Datei auflösen
-bool isAbsolutePath (const std::string& p)
-{
-    if (! p.empty() && isPathSeparator (p[0]))   // auch Windows-Netzwerkpfade "\\server\..."
-        return true;
-    return p.size() > 2 && std::isalpha ((unsigned char) p[0]) && p[1] == ':' && isPathSeparator (p[2]);
-}
+// isAbsolutePath: siehe FileUtil.h
 
 std::string regionName (const PlayableRegion& r)
 {
@@ -152,10 +147,10 @@ bool canOpen (const std::string& path)
 }
 
 // Sample-Pfade auflösen, mit eng begrenztem Rückgriff bei umbenannten Instrumenten (seit 22.10.2026):
-// Wurden „ottowaalkes.sfz“ und der Ordner „ottowaalkes Samples“ umbenannt (z. B. in „karldall“), ohne die Pfade in
+// Wurden „altname.sfz“ und der Ordner „altname Samples“ umbenannt (z. B. in „neuname“), ohne die Pfade in
 // der SFZ anzupassen, fehlen alle Samples. Nur dann wird der ERSTE Ordner des relativen Sample-Pfads ersetzt – erst
 // durch „<Instrument> Samples“, dann durch „<Instrument>“; Unterordner und Dateiname bleiben, wie sie sind
-// („ottowaalkes Samples/Light/c4.wav“ → „karldall Samples/Light/c4.wav“). Wird das Sample unter dem eigentlichen
+// („altname Samples/Light/c4.wav“ → „neuname Samples/Light/c4.wav“). Wird das Sample unter dem eigentlichen
 // Pfad gefunden, ändert sich nichts. Statt je Sample eine Meldung gibt es eine Zeile je umgeleitetem Ordner.
 class SamplePathResolver
 {
@@ -242,12 +237,12 @@ std::unique_ptr<Instrument> buildInstrument (const ParsedInstrument& parsed, con
     if (guard)
     {
         std::vector<std::string> files;
-        std::map<std::string, bool> seen;
+        std::set<std::string> seen;
         uint64_t fileBytes = 0;
         for (const Region& region : parsed.regions)
         {
             const std::string& fullPath = paths.resolve (region.samplePath);
-            if (seen.emplace (fullPath, true).second)
+            if (seen.insert (fullPath).second)
             {
                 files.push_back (fullPath);
                 fileBytes += fileSizeOf (fullPath);
@@ -284,7 +279,7 @@ std::unique_ptr<Instrument> buildInstrument (const ParsedInstrument& parsed, con
         }
     }
     std::map<std::string, std::shared_ptr<const SampleData>> cache;   // gleiches Sample nur einmal laden
-    std::map<std::string, bool> missing;
+    std::set<std::string> missing;                                     // Pfade fehlender Samples (je einmal)
 
     for (const Region& region : parsed.regions)
     {
@@ -308,7 +303,7 @@ std::unique_ptr<Instrument> buildInstrument (const ParsedInstrument& parsed, con
             }
             else
             {
-                missing[fullPath] = true;
+                missing.insert (fullPath);
                 inst->warnings.push_back ("Sample '" + region.samplePath + "': " + error);
             }
         }
