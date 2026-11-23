@@ -6,11 +6,10 @@
 // Synth.cpp – Märmel Engine
 
 #include "Synth.h"
-
-#include <array>
 #include "VelocityResponse.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace maermel
@@ -55,6 +54,7 @@ void Synth::prepare (double hostSampleRate)
         v.filterR.prepare (sampleRate);
     }
     smoothingCoeff = (float) std::exp (-16.0 / (0.02 * sampleRate));   // ca. 20 ms, pro 16-Sample-Block
+    blockSmoothingCoeff = smoothingCoeff;
     chorus.prepare (sampleRate);          // alloziert den Delay-Puffer (nur hier, nie im Audio-Thread)
     chorusAmountSet = -1.0;
     smoothingPrimed = false;
@@ -69,8 +69,11 @@ void Synth::prepare (double hostSampleRate)
 void Synth::setEnvelope (const Envelope::Params& params)
 {
     envParams = params;
+    // Wirkt auch auf klingende Noten, ohne Sprung. Stille Plätze bekommen die Werte erst beim nächsten Anschlag
+    // (startVoice) – spart beim Drehen eines Hüllkurvenreglers die Neuberechnung für bis zu 256 Plätze.
     for (auto& v : voices)
-        v.env.setParams (params);   // wirkt auch auf klingende Noten, ohne Sprung
+        if (v.active())
+            v.env.setParams (params);
 }
 
 void Synth::setLfoRouting (float pitch, float filter, float volume, float pan) noexcept
@@ -86,7 +89,8 @@ void Synth::setFilterEnvelope (const Envelope::Params& params)
 {
     filterEnvParams = params;
     for (auto& v : voices)
-        v.filterEnv.setParams (params);
+        if (v.active())                 // wie setEnvelope: stille Plätze erst beim Anschlag
+            v.filterEnv.setParams (params);
 }
 
 void Synth::setVelocityRange (float decibels) noexcept
@@ -336,16 +340,28 @@ Synth::Voice* Synth::allocateVoice()
         if (! v.active())
             return &v;
 
-    // Pool voll: die älteste ausblendende Stimme sofort beenden
-    Voice* oldestFading = nullptr;
+    // Pool voll: eine ausblendende Stimme sofort beenden – die leiseste (seit 23.11.2026; vorher die älteste).
+    // Eine gerade erst zum Ausblenden markierte Stimme hat oft noch vollen Pegel; sie abzuschneiden knackt.
+    // Bei gleichem Pegel gewinnt die ältere.
+    Voice* quietest = nullptr;
+    float quietestLevel = 0.0f;
     for (auto& v : voices)
-        if (v.fading && (! oldestFading || v.startOrder < oldestFading->startOrder))
-            oldestFading = &v;
-
-    if (oldestFading)
     {
-        oldestFading->region = nullptr;
-        return oldestFading;
+        if (! v.fading)
+            continue;
+        const float level = v.fadeGain * v.env.currentLevel();
+        if (quietest == nullptr || level < quietestLevel
+            || (level == quietestLevel && v.startOrder < quietest->startOrder))
+        {
+            quietest = &v;
+            quietestLevel = level;
+        }
+    }
+
+    if (quietest)
+    {
+        quietest->region = nullptr;
+        return quietest;
     }
     return nullptr;
 }
@@ -540,6 +556,7 @@ void Synth::startVoice (Voice& v, const PlayableRegion& r, int note, int velocit
     v.driveL.reset();
     v.driveR.reset();
     v.position = (double) computeStartFrame (r, velocity);
+    v.loopWrapped = false;
     if (v.position > 0.0)
     {
         v.fadeInGain = 0.0f;                                   // nicht am Dateianfang: kurz einblenden
@@ -574,13 +591,11 @@ void Synth::startVoice (Voice& v, const PlayableRegion& r, int note, int velocit
     }
 
     // Hüllkurven: Velocity und Note bestimmen die Zeiten dieser Stimme (Vel-Regler, Key)
-    v.env.setParams (envParams);
-    v.env.setVoiceContext (velocity, effectiveNote (note));
+    v.env.setParamsAndContext (envParams, velocity, effectiveNote (note));   // Koeffizienten nur einmal berechnen
     v.env.noteOn();
 
     // Filter: Hüllkurve, Keytracking (Oktaven relativ zu C4) und Velocity-Anteil beim Anschlag
-    v.filterEnv.setParams (filterEnvParams);
-    v.filterEnv.setVoiceContext (velocity, effectiveNote (note));
+    v.filterEnv.setParamsAndContext (filterEnvParams, velocity, effectiveNote (note));
     v.filterEnv.noteOn();
     v.filterL.start (filterType);
     v.filterR.start (filterType);
@@ -637,7 +652,7 @@ void Synth::startGlide (Voice& v, double fromPitch) noexcept
     v.glideRemaining = steps;
 }
 
-int Synth::startNote (int note, int velocity, const Continuation* legato, double glideFromPitch)
+int Synth::startNote (int note, int velocity, double glideFromPitch)
 {
     if (! instrument)
         return 0;
@@ -673,19 +688,6 @@ int Synth::startNote (int note, int velocity, const Continuation* legato, double
 
         startVoice (*v, r, note, velocity);
         v->noteGroup = group;
-
-        if (legato)
-        {
-            // Legato: Hüllkurven und Poly-LFO laufen an derselben Stelle weiter,
-            // das neue Sample wird kurz eingeblendet
-            v->env = legato->env;
-            v->env.setParams (envParams);
-            v->filterEnv = legato->filterEnv;
-            v->filterEnv.setParams (filterEnvParams);
-            v->polyLfo = legato->polyLfo;
-            v->fadeInGain = 0.0f;
-            v->fadeInStep = fadeStep;
-        }
         startGlide (*v, glideFromPitch);
         ++started;
     }
@@ -834,6 +836,7 @@ void Synth::noteOn (int note, int velocity, int channel)
         noteOff (note);
         return;
     }
+    velocity = std::min (velocity, 127);   // Engine auch bei direktem Aufruf (Testprogramme) im MIDI-Bereich
     noteChannel[(size_t) note] = (uint8_t) std::min (15, std::max (0, channel));
     notePressure[(size_t) note] = 0.0f;   // neuer Anschlag: Poly-Aftertouch dieser Taste beginnt bei 0
 
@@ -862,7 +865,7 @@ void Synth::noteOn (int note, int velocity, int channel)
 
     if (voiceMode == VoiceMode::Poly)
     {
-        startNote (note, velocity, nullptr, -1.0);
+        startNote (note, velocity, -1.0);
         return;
     }
 
@@ -885,14 +888,13 @@ void Synth::noteOn (int note, int velocity, int channel)
     {
         // Legato: kein neues Sample – die klingende Stimme wechselt nur die Tonhöhe (mit Glide);
         // Sample-Position, Hüllkurven, Filter und LFO laufen unverändert weiter
-        noteVelocity[(size_t) note] = velocity;
         retargetMonoVoices (note, fromPitch);
     }
     else
     {
         fadeAllPlaying();
         // Mono: Glide immer; Legato: nur bei gebundenen Noten (hier also nicht)
-        startNote (note, velocity, nullptr, voiceMode == VoiceMode::Mono ? fromPitch : -1.0);
+        startNote (note, velocity, voiceMode == VoiceMode::Mono ? fromPitch : -1.0);
     }
 
     monoNote = note;
@@ -937,7 +939,7 @@ void Synth::noteOff (int note)
         else
         {
             fadeNoteVoices (monoNote);
-            startNote (target, noteVelocity[(size_t) target], nullptr, fromPitch);
+            startNote (target, noteVelocity[(size_t) target], fromPitch);
         }
         monoNote = target;
         lastMonoPitch = (double) target;
@@ -1047,7 +1049,7 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
     // ihres Kanals oder Poly-Aftertouch ihrer Taste), geglättet wie die Controller-Überblendung (ca. 20 ms)
     const float pressureTarget = std::max (chanPressure[(size_t) v.channel], notePressure[(size_t) v.note]);
     v.pressure = (v.pressure < 0.0f) ? pressureTarget
-                                     : smoothingCoeff * v.pressure + (1.0f - smoothingCoeff) * pressureTarget;
+                                     : blockSmoothingCoeff * v.pressure + (1.0f - blockSmoothingCoeff) * pressureTarget;
     const float wheelNow = std::max (modWheelSmoothed, v.pressure);
     auto wheelFactor = [&] (float w) { return 1.0f - w + w * wheelNow; };
 
@@ -1082,7 +1084,7 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
     if (! r.sfz.ccCrossfades.empty())
     {
         const float target = controllerCrossfade (r.sfz);
-        v.xfadeCc = (v.xfadeCc < 0.0f) ? target : smoothingCoeff * v.xfadeCc + (1.0f - smoothingCoeff) * target;
+        v.xfadeCc = (v.xfadeCc < 0.0f) ? target : blockSmoothingCoeff * v.xfadeCc + (1.0f - blockSmoothingCoeff) * target;
         xfade *= v.xfadeCc;
     }
     const float targetLeft  = keyGain * lfoGain * xfade * (1.0f - std::max (0.0f, pan));
@@ -1106,12 +1108,12 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
                             + filterModulationOctaves (envAmountSmoothed, v.velEnvAtOn, v.velDirectAtOn,
                                                        v.velocityNorm, v.filterEnv.currentLevel());
         const float hz = 20.0f * std::exp2 (octaves);
-        v.filterL.setCutoffAndResonance (hz, resonanceSmoothed);
+        v.filterL.setCutoff (hz, blockResonance);          // Resonanzwerte einmal je Block (updateSmoothing)
         if (channels > 1)
-            v.filterR.setCutoffAndResonance (hz, resonanceSmoothed);
+            v.filterR.copyCoefficientsFrom (v.filterL);     // gleiche Werte wie links, ohne sie neu zu rechnen
     }
-    const float driveGain = Drive::gain (driveSmoothed);
-    const float driveMakeup = Drive::makeup (driveGain);
+    const float driveGain = blockDriveGain;
+    const float driveMakeup = blockDriveMakeup;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -1121,10 +1123,21 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
         const int64_t idx = (int64_t) v.position;
         const float t = (float) (v.position - (double) idx);
 
+        // Sample-Wert eines Frames für die Interpolation; im Loop werden die Nachbarn an den Loop-Grenzen umgeleitet.
+        // Die Interpolation braucht auch den Nachbarn VOR der aktuellen Position (idx - 1). Steht die Position nach
+        // einem Rücksprung auf loopStart, ist dieser Nachbar das Loop-Ende – nicht das Audio vor dem Loop.
+        // (Seit 23.11.2026; vorher wurde loopStart - 1 gelesen. Hörbar bei Single-Cycle-Wellenformen, wo der Loop
+        // nur wenige Samples lang ist: zusätzliche Obertöne in jeder Periode.) Beim ersten Hineinlaufen in den Loop
+        // (noch kein Rücksprung) ist loopStart - 1 dagegen richtig.
         auto frameValue = [&] (int64_t f, int ch) -> float
         {
-            if (loopActive && f > r.loopEnd)
-                f = r.loopStart + (f - r.loopEnd - 1) % loopLength;
+            if (loopActive)
+            {
+                if (f > r.loopEnd)
+                    f = r.loopStart + (f - r.loopEnd - 1) % loopLength;   // hinter dem Ende: von vorn
+                else if (f < r.loopStart && v.loopWrapped)
+                    f += loopLength;                                      // vor dem Anfang, schon im Loop: Loop-Ende
+            }
             if (f < 0)
                 f = 0;
             if (f > endFrame)
@@ -1204,6 +1217,7 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
         if (loopActive && v.position >= (double) (r.loopEnd + 1))
         {
             v.position -= (double) loopLength;
+            v.loopWrapped = true;
             // Schritt größer als der Loop (sehr hoch gespielter, kurzer Loop): ganz in den Loop zurückholen,
             // sonst liefe die Position davon (26.10.2026, Test mit zufällig veränderten Dateien)
             if (v.position >= (double) (r.loopEnd + 1))
@@ -1215,6 +1229,13 @@ bool Synth::renderVoice (Voice& v, float* left, float* right, int numSamples)
         if (! v.env.isActive())
             return false;                  // Hüllkurve ausgeklungen
     }
+
+    // Nur noch vom Pedal gehaltene Stimme (Taste los), die nichts mehr hören lässt: Sustain 0 und ausgeklungen,
+    // keine Anhebung durch DC → Volume. Sie würde sonst bei geloopten Samples bis zum Loslassen des Pedals still
+    // weiterrechnen und Stimmen belegen (seit 23.11.2026). Bei gedrückter Taste bleibt sie, weil der Sustain-Regler
+    // sie noch wieder anheben könnte.
+    if (! v.held && v.sustained && v.sustainLift <= 0.0f && v.env.isSilentSustain())
+        return false;
     return true;
 }
 
@@ -1224,8 +1245,14 @@ void Synth::updateSmoothing (int numSamples) noexcept
     blockSeconds = (float) ((double) numSamples / sampleRate);
     monoLfoValue = monoLfo.advance (monoLfoParams, blockSeconds);
 
-    // Kontinuierliche Regler gleiten in ca. 20 ms zum Ziel (gegen Zipper-Geräusche)
-    const float a = smoothingPrimed ? smoothingCoeff : 0.0f;   // beim ersten Mal ohne Gleiten
+    // Kontinuierliche Regler gleiten in ca. 20 ms zum Ziel (gegen Zipper-Geräusche).
+    // Der Faktor gilt für genau diese Blocklänge (seit 23.11.2026): Die Blöcke werden an jedem MIDI-Ereignis geteilt,
+    // und ein Reststück von z. B. 3 Samples zählte vorher als voller 16er-Schritt. Bei dichtem Modulationsrad, Pitch
+    // Bend oder Aftertouch glitten die Regler dadurch deutlich schneller als 20 ms (Zipper-Geräusche).
+    // pow nur bei Teilblöcken; volle Blöcke nehmen den vorberechneten Wert (bitgenau wie bisher).
+    blockSmoothingCoeff = (numSamples == 16) ? smoothingCoeff
+                                             : std::pow (smoothingCoeff, (float) numSamples / 16.0f);
+    const float a = smoothingPrimed ? blockSmoothingCoeff : 0.0f;   // beim ersten Mal ohne Gleiten
     const float b = 1.0f - a;
     smoothingPrimed = true;
     routePitch        = a * routePitch        + b * routePitchTarget;
@@ -1245,6 +1272,18 @@ void Synth::updateSmoothing (int numSamples) noexcept
     cutoffSmoothed    = a * cutoffSmoothed    + b * cutoffTarget;
     resonanceSmoothed = a * resonanceSmoothed + b * resonanceTarget;
     driveSmoothed     = a * driveSmoothed     + b * driveTarget;
+    // Für alle Stimmen gleich: einmal hier statt je Stimme (siehe Synth.h), nur bei geändertem Wert
+    if (resonanceSmoothed != blockResonanceFor)
+    {
+        blockResonance = Filter::resonanceInfo (resonanceSmoothed);
+        blockResonanceFor = resonanceSmoothed;
+    }
+    if (driveSmoothed != blockDriveFor)
+    {
+        blockDriveGain = Drive::gain (driveSmoothed);
+        blockDriveMakeup = Drive::makeup (blockDriveGain);
+        blockDriveFor = driveSmoothed;
+    }
     envAmountSmoothed = a * envAmountSmoothed + b * envAmountTarget;
 }
 
