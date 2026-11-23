@@ -199,11 +199,10 @@ public:
     // Routing-Fader, je -1 (Poly-LFO) ... 0 (aus) ... +1 (Mono-LFO); Tiefe = Auslenkung²
     void setLfoRouting (float pitch, float filter, float volume, float pan) noexcept;
 
-    // Wheel LFO: 0 = LFO wirkt immer, 1 = LFO wirkt nur mit aufgedrehtem Modulationsrad
     // Wheel LFO je Ziel 0 … 1: 0 = LFO wirkt direkt, 1 = nur über Modulationsrad (bzw. Aftertouch), dazwischen anteilig.
     // amp gilt gemeinsam für LFO-Volume und LFO-Pan (das feste Panorama aus der SFZ-Datei bleibt unberührt).
     void setWheelAmounts (float pitch, float filter, float amp = 0.0f) noexcept { wheelPitch = pitch; wheelFilter = filter; wheelAmp = amp; }
-    void modWheel (int value) noexcept            { wheelValue = toUnit (value); updateModTarget(); }
+    void modWheel (int value) noexcept            { modWheelTarget = toUnit (value); }
 
     // Aftertouch wirkt wie das Modulationsrad, aber je Stimme (seit 25.10.2026): Jede Stimme nimmt den größten Wert
     // aus Modulationsrad, Kanal-Aftertouch ihres MIDI-Kanals und polyphonem Aftertouch ihrer Taste. So stören sich
@@ -253,6 +252,7 @@ private:
         float fadeInGain = 1.0f, fadeInStep = 0.0f;   // Einblenden (Release-Samples, Legato)
 
         double position = 0.0;
+        bool loopWrapped = false;      // mindestens einmal ans Loop-Ende zurückgesprungen (linker Nachbar = Loop-Ende)
         double baseIncrement = 1.0;
         double glideFactor = 1.0, glideRatio = 1.0;   // Tonhöhenverlauf beim Glide
         int glideRemaining = 0;
@@ -289,14 +289,11 @@ private:
     int selectionNote (int played) const noexcept   { return played + coarseTune - keyShift; }
     int64_t computeStartFrame (const PlayableRegion& r, int velocity) noexcept;
 
-    // Regionen einer Note starten; gibt die Anzahl gestarteter Stimmen zurück
-    // Was bei Legato von der vorherigen Stimme weiterläuft
-    struct Continuation { Envelope env, filterEnv; Lfo polyLfo; };
-
-    // legato: Zustand, der weiterlaufen soll (Legato), sonst nullptr.
+    // Regionen einer Note starten; gibt die Anzahl gestarteter Stimmen zurück.
     // glideFromPitch: Tonhöhe, von der aus geglitten wird, oder < 0 für kein Glide.
-    int startNote (int note, int velocity, const Continuation* legato, double glideFromPitch);
-    static Continuation continuationOf (const Voice& v) { return { v.env, v.filterEnv, v.polyLfo }; }
+    // (Legato läuft über retargetMonoVoices: gleiche Stimmen, neue Tonhöhe. Der frühere Legato-Zweig hier mit
+    // übernommener Hüllkurve wurde nicht mehr benutzt und am 23.11.2026 entfernt.)
+    int startNote (int note, int velocity, double glideFromPitch);
     void startVoice (Voice& v, const PlayableRegion& r, int note, int velocity);
     // Legato: die klingenden Stimmen der Mono-Note auf eine neue Note umstellen – gleiches Sample an gleicher
     // Stelle, Hüllkurven und Filter laufen weiter, nur die Tonhöhe ändert sich (mit Glide). false = nichts klang.
@@ -366,7 +363,7 @@ private:
     double fineFactor = 1.0;
     float crushLevels = 0.0f;           // 0 = aus, sonst 2^(Bittiefe-1)
     float crushInverse = 0.0f;          // 1 / crushLevels (Multiplikation statt Division)
-    float crushRate = 0.0f;             // Hz, 0 = aus (nur noch für setCrushDirect, Messungen)
+    float crushRate = 0.0f;             // Hz, 0 = keine Ratenreduktion (gesetzt in applyCrushAmount bzw. setCrushDirect)
     // Ratenreduktion in Stufen (seit 21.10.2026): Haltelänge in halben Samples, 0 = aus, 3 = 1½, 4 = 2 … 8 = 4.
     // Nur ganze oder halbe Haltelängen – dazwischen hält das Sample & Hold unregelmäßig (z. B. 3-3-2-3-2) und
     // erzeugt schrille, unharmonische Töne (Björns Hörtest: gut klangen genau 2, 2½, 3, 3½ und 4).
@@ -381,7 +378,14 @@ private:
     float envAmountTarget = 0.0f, envAmountSmoothed = 0.0f;
     float filterKeyTrack = 0.0f, filterKeyTrackSmoothed = 0.0f;   // Filter-Keytracking wirkt laufend (geglättet)
     float filterVelocity = 0.0f, filterVelocityCutoff = 0.0f;
-    float smoothingCoeff = 0.0f;
+    float smoothingCoeff = 0.0f;        // Glättungsfaktor für einen vollen 16-Sample-Block
+    // Je Block einmal für alle Stimmen (seit 23.11.2026, vorher je Stimme): Resonanz- und Drive-Werte.
+    // Neu berechnet nur, wenn sich der geglättete Regler geändert hat (im Ruhezustand also gar nicht).
+    Filter::ResonanceInfo blockResonance;
+    float blockResonanceFor = -1.0f;    // Reglerwert, für den blockResonance gilt (-1 = noch nicht berechnet)
+    float blockDriveGain = 1.0f, blockDriveMakeup = 1.0f;
+    float blockDriveFor = -1.0f;
+    float blockSmoothingCoeff = 0.0f;   // Glättungsfaktor für den aktuellen Block (abhängig von seiner Länge)
     bool smoothingPrimed = false;       // erster Block nach prepare(): sofort auf die Zielwerte
 
     // LFOs
@@ -469,13 +473,12 @@ private:
     bool crushDirect = false;                        // setCrushDirect benutzt: Werte nicht überschreiben
     void applyCrushAmount (float amount) noexcept;   // Lo-Fi-Wert → Bittiefe und Rate
 
+    // Modulationsrad 0 … 1: Rohwert und geglättet. Aftertouch läuft je Stimme getrennt (siehe renderVoice).
     float modWheelTarget = 0.0f, modWheelSmoothed = 0.0f;
-    float wheelValue = 0.0f;                           // Rohwert 0 … 1 (Aftertouch je Stimme, siehe renderVoice)
     std::array<float, 16> chanPressure {};             // Kanal-Aftertouch je MIDI-Kanal 0 … 1
     std::array<float, 128> notePressure {};            // polyphoner Aftertouch je Taste 0 … 1
     std::array<uint8_t, 128> noteChannel {};           // Kanal, auf dem die Taste zuletzt angeschlagen wurde
     static float toUnit (int value) noexcept           { return (float) std::min (127, std::max (0, value)) / 127.0f; }
-    void updateModTarget() noexcept                    { modWheelTarget = wheelValue; }
     float blockSeconds = 0.0f;
 
     std::array<uint8_t, 128> ccValues {};   // Stand aller Controller (Start: 0)
