@@ -11,13 +11,16 @@
 #include <JuceHeader.h>
 #include "engine/Synth.h"
 #include "LibraryIndex.h"
+#include "ParameterControl.h"
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 class MaermelAudioProcessor : public juce::AudioProcessor,
-                                private juce::Timer
+                                private juce::Timer,
+                                private juce::AsyncUpdater
 {
 public:
     MaermelAudioProcessor();
@@ -74,7 +77,7 @@ public:
     juce::File getPresetFile() const  { return getInstrumentFile().withFileExtension ("sfzp"); }
 
     // LOCK (früher FIX): beim Instrumentwechsel alle Einstellungen behalten, nur die Samples austauschen
-    bool isFixActive() const noexcept   { return fixActive; }
+    bool isFixActive() const noexcept   { return fixActive.load(); }
     bool isChorusMode() const noexcept  { return fxModeParam != nullptr && fxModeParam->load() > 0.5f; }
     void setFixActive (bool active) noexcept { fixActive = active; }
     juce::File getInstrumentFile() const;
@@ -129,7 +132,7 @@ public:
     void setLiveEditActive (bool active);         // false: Überwachung beenden
     // Öffnet das aktuelle Instrument im Editor. Bei einer EXS-Datei wird vorher wie beim Speichern
     // ein SFZ daneben erzeugt (oder ein vorhandenes verwendet) und Märmel darauf umgeschaltet.
-    // message: Hinweis für die Statusanzeige (z. B. "SFZ aus EXS erzeugt"); false = Fehler
+    // message: Hinweis für die Statusanzeige (z. B. "SFZ created from EXS"); false = Fehler
     // Ist Live-Edit erlaubt, beginnt danach die Überwachung genau dieser Datei.
     bool openCurrentInstrumentInEditor (juce::String& message);
 
@@ -151,15 +154,20 @@ public:
     int getMidiNoteCount() const noexcept          { return midiNoteCount.load(); }
     int getMidiNoteVelocity() const noexcept       { return midiNoteVelocity.load(); }
     int getControlFeedbackSlot() const noexcept    { return controlFeedbackSlot.load(); }
-    int getControlCc (int slot) const noexcept      { return controlSlots[(size_t) (slot & 3)].cc.load(); }
-    int getControlTarget (int slot) const noexcept  { return controlSlots[(size_t) (slot & 3)].target.load(); }
+    // Ungültige Slot-Nummer (z. B. -1): kein Controller (-1) bzw. kein Ziel (0) – statt stillschweigend einen anderen Slot
+    int getControlCc (int slot) const noexcept      { return isValidSlot (slot) ? controlSlots[(size_t) slot].cc.load() : -1; }
+    int getControlTarget (int slot) const noexcept  { return isValidSlot (slot) ? controlSlots[(size_t) slot].target.load() : 0; }
+    static bool isValidSlot (int slot) noexcept     { return slot >= 0 && slot < maermel::control::kSlots; }
 
     // Export des aktuellen Instruments: SFZ (Sample-Pfade umgeschrieben), Preset (.sfzp) und Ordner
     // „<Name> Samples“ mit allen benötigten Samples. Nur wenn alle Samples gefunden wurden. Kopiert wird im
     // Hintergrund; der Stand ist über getExportStatus abrufbar.
     bool canExportInstrument() const;
     void startExport (const juce::File& targetSfz);
-    struct ExportStatus { int state = 0, done = 0, total = 0; };   // state: 0 ruht, 1 läuft, 2 fertig, 3 Fehler
+    // Zustand des Exports (exportState, ExportStatus::state). Einfaches enum, damit es sich ohne Umwandlung in
+    // std::atomic<int> speichern und mit int vergleichen lässt.
+    enum ExportState : int { exportIdle = 0, exportRunning = 1, exportFinished = 2, exportFailed = 3 };
+    struct ExportStatus { int state = exportIdle, done = 0, total = 0; };
     ExportStatus getExportStatus() const noexcept   { return { exportState.load(), exportDone.load(), exportTotal.load() }; }
     juce::String getExportMessage() const           { const juce::ScopedLock sl (infoLock); return exportMessage; }
 
@@ -198,7 +206,9 @@ private:
     juce::String lastSaveMessage;
     std::unique_ptr<juce::XmlElement> createSettingsXml() const;  // alle Parameter, ohne Instrument
 
-    bool fixActive = false;                       // nur Message-Thread
+    // LOCK. Atomar, weil setStateInformation (Projekt laden) bei manchen Hosts nicht auf dem Message-Thread läuft,
+    // die Oberfläche den Wert aber gleichzeitig liest.
+    std::atomic<bool> fixActive { false };
 
     // Live-Edit (nur Message-Thread, außer liveReloadPending)
     bool liveEditActive = false;
@@ -217,6 +227,29 @@ private:
     bool savePresetInternal();
     bool openInEditorInternal (juce::String& message);
     juce::String presetNote;                      // für die Info-Zeile, z. B. "Preset: Piano.sfzp" (unter infoLock)
+
+    // --- Einstellungen erst zusammen mit dem neuen Instrument übernehmen (seit 23.11.2026) ---
+    // Früher wurden beim Instrumentwechsel die Einstellungen des neuen Instruments (Preset bzw. Standardwerte)
+    // sofort gesetzt, das Instrument selbst kam aber erst nach dem Laden. Dazwischen spielte das alte Instrument
+    // mit den neuen Einstellungen – z. B. ein lautes Instrument mit dem angehobenen Volume des leisen neuen
+    // (Lautstärkesprung, im Debug-Build deutlich, auf langsamen Platten auch in der Release-Fassung).
+    // Jetzt: Die Einstellungen werden nur gemerkt. Ist das Instrument geladen, setzt der Message-Thread erst die
+    // Einstellungen und übergibt gleich danach das Instrument an den Audio-Thread (handleAsyncUpdate). Die Lücke
+    // ist damit höchstens ein Audioblock; die Glättung der Regler (20 ms) verdeckt sie.
+    struct DeferredSettings
+    {
+        bool active = false;                                 // es warten Einstellungen auf ein Instrument
+        juce::File file;                                     // zu diesem Ladeauftrag gehören sie
+        std::unique_ptr<juce::XmlElement> preset;            // Werte; nullptr = Standardwerte
+        std::shared_ptr<const maermel::Instrument> loaded;   // fertig geladen, wartet auf die Übergabe
+    };
+    DeferredSettings deferred;                     // unter deferredLock
+    juce::CriticalSection deferredLock;
+    void deferSettings (const juce::File& file, const juce::XmlElement* preset);   // Message-Thread
+    void cancelDeferredSettings();                 // Message-Thread: neuer Wechsel ohne neue Einstellungen
+    void loadFinished (const juce::File& file);    // Loader-Thread: Message-Thread anstoßen, falls Einstellungen warten
+    void handleAsyncUpdate() override;             // Message-Thread: Einstellungen setzen, dann Instrument übergeben
+    void handOverInstrument (std::shared_ptr<const maermel::Instrument> instrument);   // an den Audio-Thread
     void timerCallback() override;              // gibt ausgetauschte Instrumente frei
     void takePendingInstrument() noexcept;      // Audio-Thread
     void collectFinishedInstrument() noexcept;  // Audio-Thread
@@ -242,7 +275,7 @@ private:
     std::atomic<int> currentMissingSamples { 0 };        // fehlende Samples des aktuellen Instruments
     class ExportJob;                                     // Hintergrund-Thread für den Export
     std::unique_ptr<juce::Thread> exportJob;
-    std::atomic<int> exportState { 0 }, exportDone { 0 }, exportTotal { 0 };
+    std::atomic<int> exportState { exportIdle }, exportDone { 0 }, exportTotal { 0 };
     juce::File currentFile;
     juce::String instrumentName { "No Instrument" }, instrumentInfo;
     std::atomic<int> instrumentVersion { 0 };
@@ -292,7 +325,7 @@ private:
         bool captured = false;
         float lastIncoming = -1.0f, lastSet = -1.0f;
     };
-    std::array<ControlSlot, 4> controlSlots;
+    std::array<ControlSlot, maermel::control::kSlots> controlSlots;
     std::atomic<int> controlFeedbackCount { 0 }, controlFeedbackSlot { -1 };
     bool handleParameterControllers (const juce::MidiMessage& m) noexcept;   // Audio-Thread
     std::atomic<int> learnedValue { -1 };
