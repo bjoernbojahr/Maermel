@@ -16,11 +16,11 @@
 #include "engine/SfzExport.h"
 #include "engine/InstrumentLocator.h"
 #include "engine/FileUtil.h"
-#include <set>
 #include "ExternalLaunch.h"
 #include "AboutPanel.h"   // Build-Angaben für das Logfile (wie in der About-Box)
 
 #include <cmath>
+#include <set>
 
 namespace
 {
@@ -128,6 +128,7 @@ juce::String percentText (float value, int)
 }
 
 constexpr float kVolumeMinDb = -60.0f;   // unterste Stellung = stumm
+constexpr float kDefaultVelocityDb = 30.0f;   // Amp Velocity: Standard-Dynamikbereich (Parameter und Rückfall beim Eintippen)
 
 juce::String volumeText (float db, int)
 {
@@ -385,6 +386,7 @@ MaermelAudioProcessor::~MaermelAudioProcessor()
         exportJob->stopThread (10000);   // laufenden Export sauber beenden (prüft threadShouldExit)
     loader.stopThread (5000);
     stopTimer();
+    cancelPendingUpdate();               // keine Übergabe mehr nach dem Abbau (handleAsyncUpdate)
 }
 
 // --- Laden im Hintergrund ---------------------------------------------------
@@ -421,6 +423,7 @@ void MaermelAudioProcessor::InstrumentLoader::run()
                 pending = false;
             }
             owner.loadInstrumentNow (file);
+            owner.loadFinished (file);       // warten Einstellungen auf dieses Instrument: Message-Thread anstoßen
         }
     }
 }
@@ -435,7 +438,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> made;
     auto add = [&made] (std::unique_ptr<juce::RangedAudioParameter> p) { made.push_back (std::move (p)); };
 
-    auto timeParam = [] (const char* id, const char* name, float defaultKnob)
+    // id und name als juce::String (nicht const char*): so darf der Aufrufer auch zusammengesetzte Texte übergeben,
+    // ohne dass ein Zeiger auf einen temporären String entsteht
+    auto timeParam = [] (const juce::String& id, const juce::String& name, float defaultKnob)
     {
         return std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { id, 1 }, name, juce::NormalisableRange<float> (0.0f, 1.0f), defaultKnob,
@@ -521,9 +526,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
 
     // Vel: Dynamikbereich zwischen Velocity 1 und 127, 0 = keine Anschlagsdynamik, 84 = SFZ-Standard
     add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "velocity", 1 }, "Amp Velocity", curvedRange (0.0f, 84.0f), 30.0f,   // Standard 30 dB
+        juce::ParameterID { "velocity", 1 }, "Amp Velocity", curvedRange (0.0f, 84.0f), kDefaultVelocityDb,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (decibelRangeText)
-            .withValueFromStringFunction ([] (const juce::String& t) { return maermel::parse::decibels (plain (t), 0.0f, 84.0f, 40.0f); })));
+            .withValueFromStringFunction ([] (const juce::String& t) { return maermel::parse::decibels (plain (t), 0.0f, 84.0f, kDefaultVelocityDb); })));
 
     // Stimmen-Schnellauswahl: Legato, Mono oder feste Stimmenzahl
     add (std::make_unique<juce::AudioParameterChoice> (
@@ -638,7 +643,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
         add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id + "env", 1 }, name + "Env Mode", false));
         add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id + "wave", 1 }, name + "Wave", lfoWaveNames, 0));
         add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id + "invert", 1 }, name + "Invert", false));
-        add (timeParam ((id + "delay").toRawUTF8(), (name + "Delay").toRawUTF8(), 0.0f));
+        add (timeParam (id + "delay", name + "Delay", 0.0f));
     }
 
     // Routing: links Poly-LFO, rechts Mono-LFO
@@ -1143,6 +1148,12 @@ void MaermelAudioProcessor::renderRange (juce::AudioBuffer<float>& buffer, int s
 {
     const int outChannels = buffer.getNumChannels();
 
+    // Schutz (seit 23.11.2026): Ohne prepareToPlay ist der Zwischenpuffer leer. Die Schleife käme dann mit n = 0
+    // nie voran und würde den Audio-Thread für immer blockieren. Normale Hosts rufen prepareToPlay immer vorher auf,
+    // fehlerhafte Hosts oder Prüfprogramme nicht unbedingt – dann bleibt der Block einfach still.
+    if (renderBuffer.getNumSamples() <= 0)
+        return;
+
     while (start < end)
     {
         const int n = juce::jmin (end - start, renderBuffer.getNumSamples());
@@ -1457,7 +1468,7 @@ bool MaermelAudioProcessor::convertCurrentExsToSfz (juce::String& message)
     if (sfzFile.existsAsFile())
     {
         switchToSfz ("Using existing SFZ next to the EXS");
-        message = "vorhandenes SFZ verwendet";
+        message = "Using existing SFZ";
         return true;
     }
 
@@ -1532,7 +1543,10 @@ public:
             const auto conversion = maermel::convertExsToSfz (
                 source.getFullPathName().replaceCharacter ('\\', '/').toStdString(), std::string());
             if (! conversion.ok)
-                return finish (false, "Cannot read EXS: " + utf8 (conversion.error));
+            {
+                finish (false, "Cannot read EXS: " + utf8 (conversion.error));
+                return;
+            }
             text = conversion.sfzText;
         }
         else
@@ -1542,14 +1556,20 @@ public:
         const std::string directory = source.getParentDirectory().getFullPathName().replaceCharacter ('\\', '/').toStdString() + "/";
         const auto plan = maermel::planSfzExport (text, directory);
         if (! plan.ok)
-            return finish (false, utf8 (plan.error));
+        {
+            finish (false, utf8 (plan.error));
+            return;
+        }
 
         // 2. Samples sammeln: gleiche Dateien im Zielordner werden übersprungen, verschiedene bekommen
         //    eindeutige Namen („C4 (2).wav“)
         const juce::String folderName = target.getFileNameWithoutExtension() + " Samples";
         const juce::File folder = target.getSiblingFile (folderName);
         if (! plan.samples.empty() && ! folder.createDirectory())
-            return finish (false, "Could not create folder: " + folderName);
+        {
+            finish (false, "Could not create folder: " + folderName);
+            return;
+        }
 
         owner.exportTotal = (int) plan.samples.size();
         owner.exportDone = 0;
@@ -1558,10 +1578,16 @@ public:
         for (const auto& sample : plan.samples)
         {
             if (threadShouldExit())
-                return finish (false, "Export cancelled");
+            {
+                finish (false, "Export cancelled");
+                return;
+            }
             const juce::File from = existingFile (sample.source);   // auch bei abweichender Groß/klein-Schreibung
             if (! from.existsAsFile())
-                return finish (false, "Sample not found: " + from.getFullPathName());
+            {
+                finish (false, "Sample not found: " + from.getFullPathName());
+                return;
+            }
 
             juce::String name;
             for (int number = 1; ; ++number)
@@ -1573,7 +1599,10 @@ public:
                 if (! to.exists())
                 {
                     if (! from.copyFileTo (to))
-                        return finish (false, "Could not copy: " + name);
+                    {
+                        finish (false, "Could not copy: " + name);
+                        return;
+                    }
                     break;
                 }
                 if (to == from || to.hasIdenticalContentTo (from))
@@ -1587,11 +1616,17 @@ public:
         // 3. SFZ und Preset schreiben (Preset verweist relativ auf die SFZ daneben)
         const juce::String sfzText = utf8 (maermel::fillExportText (plan, folderName.toStdString(), finalNames));
         if (! target.replaceWithText (sfzText, false, false, "\n"))
-            return finish (false, "Could not write " + target.getFileName());
+        {
+            finish (false, "Could not write " + target.getFileName());
+            return;
+        }
         presetXml->setAttribute ("instrument", target.getFileName());
         presetXml->setAttribute ("instrumentPath", pathWithoutUserName (target));   // ohne Benutzernamen
         if (! presetXml->writeTo (target.withFileExtension ("sfzp")))
-            return finish (false, "Could not write " + target.withFileExtension ("sfzp").getFileName());
+        {
+            finish (false, "Could not write " + target.withFileExtension ("sfzp").getFileName());
+            return;
+        }
 
         finish (true, juce::String ((int) plan.samples.size()) + " samples");
     }
@@ -1605,7 +1640,7 @@ private:
         }
         if (! ok)
             owner.logError ("Export " + target.getFullPathName() + ": " + message);
-        owner.exportState = ok ? 2 : 3;
+        owner.exportState = ok ? exportFinished : exportFailed;
     }
 
     MaermelAudioProcessor& owner;
@@ -1617,16 +1652,16 @@ bool MaermelAudioProcessor::canExportInstrument() const
 {
     const juce::File file = getInstrumentFile();
     return file.existsAsFile() && file.hasFileExtension ("sfz;exs") && currentMissingSamples.load() == 0
-           && getInstrumentName().isNotEmpty() && exportState.load() != 1;
+           && getInstrumentName().isNotEmpty() && exportState.load() != exportRunning;
 }
 
 void MaermelAudioProcessor::startExport (const juce::File& targetSfz)
 {
-    if (exportState.load() == 1 || ! canExportInstrument())
+    if (exportState.load() == exportRunning || ! canExportInstrument())
         return;
     if (exportJob != nullptr)
         exportJob->stopThread (2000);                     // vorheriger Export ist beendet; Thread-Objekt freigeben
-    exportState = 1;
+    exportState = exportRunning;
     exportDone = 0;
     exportTotal = 0;
     // Preset mit den aktuellen Einstellungen hier (Message-Thread) erzeugen, geschrieben wird es im Hintergrund
@@ -1719,7 +1754,7 @@ void MaermelAudioProcessor::loadInstrumentFile (const juce::File& requestedFile,
             ++instrumentVersion;
             return;
         }
-        applyParameterValues (preset.get());
+        deferSettings (file, preset.get());        // gesetzt erst mit dem geladenen Instrument (siehe Header)
         note = "Preset: " + requestedFile.getFileName();
     }
     else if (applyPreset && ! fixActive)
@@ -1728,12 +1763,14 @@ void MaermelAudioProcessor::loadInstrumentFile (const juce::File& requestedFile,
         const juce::File presetFile = file.withFileExtension ("sfzp");
         auto preset = presetFile.existsAsFile() ? juce::XmlDocument::parse (presetFile) : nullptr;
         const bool valid = isPresetElement (preset.get());
-        applyParameterValues (valid ? preset.get() : nullptr);
+        deferSettings (file, valid ? preset.get() : nullptr);   // erst mit dem geladenen Instrument
         note = valid ? "Preset: " + presetFile.getFileName() : juce::String ("Default settings (no preset)");
     }
-    else if (fixActive)
+    else
     {
-        note = "LOCK: settings kept";
+        cancelDeferredSettings();                 // Einstellungen bleiben; frühere, noch wartende verfallen
+        if (fixActive)
+            note = "LOCK: settings kept";
     }
 
     {
@@ -1898,14 +1935,84 @@ void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
         instrumentInfo = info;
     }
 
+    // Warten Einstellungen auf genau dieses Instrument (Instrumentwechsel mit Preset/Standardwerten), übergibt es
+    // der Message-Thread zusammen mit ihnen (loadFinished → handleAsyncUpdate). Sonst sofort wie bisher.
+    {
+        const juce::ScopedLock sl (deferredLock);
+        if (deferred.active && deferred.file == file)
+        {
+            deferred.loaded = std::move (instrument);
+            ++instrumentVersion;
+            return;
+        }
+    }
+    handOverInstrument (std::move (instrument));
+    ++instrumentVersion;
+}
+
+void MaermelAudioProcessor::handOverInstrument (std::shared_ptr<const maermel::Instrument> instrument)
+{
     std::shared_ptr<const maermel::Instrument> notYetPlayed;
     {
         const juce::SpinLock::ScopedLockType lock (instrumentLock);
         notYetPlayed = std::move (pendingInstrument);   // falls noch ein älteres wartete
         pendingInstrument = std::move (instrument);
     }
+    // notYetPlayed wird hier (außerhalb des Audio-Threads) freigegeben
+}
 
-    ++instrumentVersion;
+void MaermelAudioProcessor::deferSettings (const juce::File& file, const juce::XmlElement* preset)
+{
+    std::shared_ptr<const maermel::Instrument> superseded;   // außerhalb der Sperre freigeben
+    {
+        const juce::ScopedLock sl (deferredLock);
+        deferred.active = true;
+        deferred.file = file;
+        deferred.preset = (preset != nullptr) ? std::make_unique<juce::XmlElement> (*preset) : nullptr;
+        superseded = std::move (deferred.loaded);           // ein noch nicht übergebenes älteres Instrument verfällt
+    }
+}
+
+void MaermelAudioProcessor::cancelDeferredSettings()
+{
+    std::shared_ptr<const maermel::Instrument> superseded;
+    {
+        const juce::ScopedLock sl (deferredLock);
+        deferred.active = false;
+        deferred.preset.reset();
+        superseded = std::move (deferred.loaded);
+    }
+}
+
+void MaermelAudioProcessor::loadFinished (const juce::File& file)
+{
+    // Auch wenn das Laden abgebrochen wurde (z. B. kein Instrument übergeben): Die Einstellungen sollen trotzdem
+    // gesetzt werden, wie früher. handleAsyncUpdate prüft selbst, ob noch alles zusammenpasst.
+    const juce::ScopedLock sl (deferredLock);
+    if (deferred.active && deferred.file == file)
+        triggerAsyncUpdate();
+}
+
+void MaermelAudioProcessor::handleAsyncUpdate()
+{
+    // Message-Thread. Erst die Einstellungen, unmittelbar danach das Instrument – so spielen altes Instrument und
+    // neue Einstellungen höchstens einen Audioblock lang zusammen.
+    std::unique_ptr<juce::XmlElement> preset;
+    std::shared_ptr<const maermel::Instrument> instrument;
+    {
+        const juce::ScopedLock sl (deferredLock);
+        // Inzwischen abgebrochen oder durch einen neueren Wechsel ersetzt (deferSettings hat dann Datei und Werte
+        // überschrieben und ein älteres geladenes Instrument verworfen): nichts zu tun bzw. die neuen Werte warten
+        // auf ihr eigenes Instrument
+        if (! deferred.active || (deferred.loaded == nullptr && loader.hasNewerRequest()))
+            return;
+        preset = std::move (deferred.preset);
+        instrument = std::move (deferred.loaded);
+        deferred.active = false;
+    }
+    applyParameterValues (preset.get());                     // nullptr = Standardwerte
+    if (instrument != nullptr)
+        handOverInstrument (std::move (instrument));
 }
 
 void MaermelAudioProcessor::releaseInstrumentBeforeLoading()
@@ -1961,7 +2068,7 @@ void MaermelAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
             state.setProperty ("sampleFingerprint", currentFingerprintFile == file ? currentFingerprint : juce::String(),
                                nullptr);
         }
-        state.setProperty ("fix", fixActive, nullptr);
+        state.setProperty ("fix", fixActive.load(), nullptr);
     }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -2065,11 +2172,11 @@ juce::File MaermelAudioProcessor::locateInstrument (const juce::String& savedPat
     const juce::String fileName = unified.fromLastOccurrenceOf ("/", false, false);
     const juce::String parentName = unified.upToLastOccurrenceOf ("/", false, false).fromLastOccurrenceOf ("/", false, false);
 
-    // 1. gespeicherter Pfad (ein Pfad von einem anderen System ist hier evtl. gar kein gültiger absoluter Pfad)
-    if (juce::File::isAbsolutePath (savedPath))
+    // 1. gespeicherter Pfad: "~/…" (seit 23.11.2026) oder vollständig (ältere Projekte). Ein Pfad von einem anderen
+    //    System ist hier evtl. gar kein gültiger absoluter Pfad – fileFromStoredPath gibt dann keine Datei zurück.
     {
-        const juce::File saved (savedPath);
-        if (saved.existsAsFile())
+        const juce::File saved = fileFromStoredPath (savedPath);
+        if (saved != juce::File() && saved.existsAsFile())
             return saved;
     }
 
