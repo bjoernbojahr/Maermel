@@ -126,7 +126,9 @@ namespace bjchorus
             if (numberOfStages > kMaxStages) numberOfStages = kMaxStages;
             stagesInUse = numberOfStages;
 
-            for (int i = 0; i < kMaxStages; ++i)
+            // Nur die benutzten Stufen (die übrigen bekommen ihre Werte, falls sie später gebraucht werden,
+            // beim nächsten setup mit mehr Stufen)
+            for (int i = 0; i < stagesInUse; ++i)
                 stages[i].setCutoff(cutoffHz, sampleRate);
         }
 
