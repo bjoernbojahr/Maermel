@@ -6,6 +6,7 @@
 // SfzParser.cpp – Märmel Engine
 
 #include "SfzParser.h"
+#include "FileUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -19,7 +20,13 @@ namespace maermel
 namespace
 {
 
-using Opcode  = std::pair<std::string, std::string>;
+// Ein Opcode mit seiner Zeile in der Datei (seit 23.11.2026: Meldungen nennen die Zeile des Opcodes selbst, nicht
+// die der Region – ein fehlerhafter Wert in <group> wird so dort gefunden, wo er steht)
+struct Opcode
+{
+    std::string name, value;
+    int line = 0;
+};
 using Opcodes = std::vector<Opcode>;
 
 std::string trim (const std::string& s)
@@ -44,6 +51,30 @@ bool isNameChar (char c)
 
 // Entfernt /* ... */ und // ... bis Zeilenende. Zeilenumbrüche bleiben erhalten,
 // damit Zeilennummern in Meldungen stimmen.
+// Zeilenenden vereinheitlichen: \r\n (Windows) → \n, einzelnes \r (klassisches Mac OS) → \n.
+// Seit 23.11.2026 als eigener Schritt vor dem Entfernen der Kommentare. Vorher wurde jedes \r zu \n, aus \r\n
+// wurden also ZWEI Zeilenumbrüche – alle Zeilenangaben in „Loading notes“ lagen dann grob beim Doppelten. Bei
+// reinen \r-Dateien hätte ein //-Kommentar außerdem bis zum nächsten \n gereicht, also bis zum Dateiende.
+std::string unifyLineEnds (const std::string& text)
+{
+    std::string out;
+    out.reserve (text.size());
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '\r')
+        {
+            if (i + 1 < text.size() && text[i + 1] == '\n')
+                continue;               // \r vor \n: weglassen, das \n folgt im nächsten Durchlauf
+            out.push_back ('\n');      // einzelnes \r: als Zeilenende werten
+            continue;
+        }
+        out.push_back (text[i]);
+    }
+    return out;
+}
+
+// Kommentare entfernen (/* … */ und // bis Zeilenende); Zeilenumbrüche bleiben erhalten, damit die Zeilennummern
+// stimmen. Erwartet einheitliche Zeilenenden (unifyLineEnds).
 std::string stripComments (const std::string& text)
 {
     std::string out;
@@ -73,7 +104,7 @@ std::string stripComments (const std::string& text)
             continue;
         }
 
-        out.push_back (text[i] == '\r' ? '\n' : text[i]);
+        out.push_back (text[i]);
     }
 
     return out;
@@ -158,9 +189,9 @@ public:
         const std::string name = toLower (nameRaw);
 
         if      (name == "control") current = Header::Control;
-        else if (name == "global")  { current = Header::Global; globalOps.clear(); masterOps.clear(); groupOps.clear(); }
-        else if (name == "master")  { current = Header::Master; masterOps.clear(); groupOps.clear(); }
-        else if (name == "group")   { current = Header::Group;  groupOps.clear(); ++groupIndex; }
+        else if (name == "global")  { current = Header::Global; globalOps.clear(); masterOps.clear(); groupOps.clear(); templateValid = false; }
+        else if (name == "master")  { current = Header::Master; masterOps.clear(); groupOps.clear(); templateValid = false; }
+        else if (name == "group")   { current = Header::Group;  groupOps.clear(); ++groupIndex; templateValid = false; }
         else if (name == "region")  { current = Header::Region; regionOps.clear(); regionLine = line; }
         else
         {
@@ -177,13 +208,13 @@ public:
         switch (current)
         {
             case Header::Control: controlOpcode (name, value, line); break;
-            case Header::Global:  globalOps.emplace_back (name, value); break;
-            case Header::Master:  masterOps.emplace_back (name, value); break;
-            case Header::Group:   groupOps.emplace_back (name, value); break;
-            case Header::Region:  regionOps.emplace_back (name, value); break;
+            case Header::Global:  globalOps.push_back ({ name, value, line }); templateValid = false; break;
+            case Header::Master:  masterOps.push_back ({ name, value, line }); templateValid = false; break;
+            case Header::Group:   groupOps.push_back ({ name, value, line });  templateValid = false; break;
+            case Header::Region:  regionOps.push_back ({ name, value, line }); break;
             case Header::Other:   break;
             case Header::None:
-                result.warnings.push_back ("Opcode '" + name + "' before the first header (line " + std::to_string (line) + ")");
+                warnOnce ("Opcode '" + name + "' before the first header (line " + std::to_string (line) + ")");
                 break;
         }
     }
@@ -203,7 +234,26 @@ private:
     std::string defaultPath;
     int groupIndex = -1;
     int regionLine = 0;
-    std::set<std::string> ignored, reportedHeaders, reportedUnknown;
+    int opLine = 0;                       // Zeile des gerade angewendeten Opcodes (für Meldungen)
+    std::set<std::string> ignored, reportedHeaders, reportedUnknown, reportedWarnings;
+
+    // Fertig angewendete Werte aus <global>, <master> und <group> – gemeinsame Vorlage für alle Regionen dieser
+    // Gruppe (seit 23.11.2026). Vorher wurden die oberen Ebenen für JEDE Region neu ausgewertet: bei großen
+    // Bibliotheken viele tausend String-Vergleiche mehr, und jede Warnung aus <group> erschien einmal je Region.
+    // Ungültig, sobald sich eine obere Ebene ändert (neuer Header, neuer Opcode dort, octave_offset/note_offset);
+    // neu aufgebaut wird sie erst bei der nächsten Region. Das Ergebnis ist gleich, weil die Region-Opcodes wie
+    // bisher zuletzt angewendet werden und damit gewinnen.
+    Region groupTemplate;
+    bool templateValid = false;
+
+    // Eine Warnung nur einmal ausgeben (gleicher Text = gleiche Stelle in der Datei)
+    void warnOnce (const std::string& text)
+    {
+        if (reportedWarnings.insert (text).second)
+            result.warnings.push_back (text);
+    }
+
+    std::string atLine() const { return " (line " + std::to_string (opLine) + ")"; }
 
     void controlOpcode (const std::string& name, const std::string& value, int line)
     {
@@ -218,11 +268,13 @@ private:
         {
             int64_t v = 0;
             if (parseInt64 (value, v)) octaveOffset = (int) std::min<int64_t> (10, std::max<int64_t> (-10, v));
+            templateValid = false;                // Noten in der Vorlage neu lesen
         }
         else if (name == "note_offset")
         {
             int64_t v = 0;
             if (parseInt64 (value, v)) noteOffset = (int) std::min<int64_t> (127, std::max<int64_t> (-127, v));
+            templateValid = false;
         }
         else if (name.rfind ("set_cc", 0) == 0 || name.rfind ("label_cc", 0) == 0)
         {
@@ -238,7 +290,7 @@ private:
     {
         if (SfzParser::parseNote (value, 0, 0, out) && out >= 0 && out <= 127)
             return true;
-        result.warnings.push_back ("Invalid keyswitch note '" + value + "' in " + name);
+        warnOnce ("Invalid keyswitch note '" + value + "' in " + name + atLine());
         return false;
     }
 
@@ -254,8 +306,7 @@ private:
         if (SfzParser::parseNote (value, octaveOffset, noteOffset, out))
             return true;
 
-        result.warnings.push_back ("Invalid note '" + value + "' in " + name + " (region line "
-                                   + std::to_string (regionLine) + ")");
+        warnOnce ("Invalid note '" + value + "' in " + name + atLine());
         return false;
     }
 
@@ -309,7 +360,7 @@ private:
             else if (v == "one_shot")        r.loopMode = LoopMode::OneShot;
             else if (v == "loop_continuous") r.loopMode = LoopMode::Continuous;
             else if (v == "loop_sustain")    r.loopMode = LoopMode::Sustain;
-            else result.warnings.push_back ("Unknown loop_mode '" + value + "'");
+            else warnOnce ("Unknown loop_mode '" + value + "'" + atLine());
         }
         else if (name == "trigger")
         {
@@ -318,7 +369,7 @@ private:
             else if (v == "release" || v == "release_key") r.trigger = Trigger::Release;
             else if (v == "first")                        r.trigger = Trigger::First;
             else if (v == "legato")                       r.trigger = Trigger::Legato;
-            else result.warnings.push_back ("Unknown trigger '" + value + "'");
+            else warnOnce ("Unknown trigger '" + value + "'" + atLine());
         }
         // Keyswitch-Noten werden ohne octave_offset/note_offset gelesen (wie Sforzando)
         else if (name == "sw_last")         { if (keyswitchNote (value, n, name)) r.swLast = n; }
@@ -349,7 +400,7 @@ private:
             }
             else
             {
-                result.warnings.push_back ("Invalid controller condition '" + name + "=" + value + "'");
+                warnOnce ("Invalid controller condition '" + name + "=" + value + "'" + atLine());
             }
         }
         else if (name == "polyphony")       { if (parseInt64 (value, i)) r.polyphony = clampInt (i, 0, 1000); }
@@ -392,7 +443,7 @@ private:
             }
             else
             {
-                result.warnings.push_back ("Invalid crossfade '" + name + "=" + value + "'");
+                warnOnce ("Invalid crossfade '" + name + "=" + value + "'" + atLine());
             }
         }
         else if (isKnownIgnoredOpcode (name))
@@ -401,7 +452,7 @@ private:
         }
         else
         {
-            unknown (name, regionLine);
+            unknown (name, opLine);
         }
     }
 
@@ -410,13 +461,27 @@ private:
         if (current != Header::Region)
             return;
 
-        Region r;
+        // Vorlage aus den oberen Ebenen (nur neu, wenn sich dort etwas geändert hat – siehe groupTemplate)
+        if (! templateValid)
+        {
+            groupTemplate = Region();
+            for (const auto* ops : { &globalOps, &masterOps, &groupOps })
+                for (const auto& op : *ops)
+                {
+                    opLine = op.line;
+                    apply (groupTemplate, op.name, op.value);
+                }
+            templateValid = true;
+        }
+
+        Region r = groupTemplate;        // Kopie: Werte aus <global>/<master>/<group> schon enthalten
         r.lineNumber = regionLine;
         r.polyphonyGroup = groupIndex;   // ohne group=: je <group>-Header (Märmels großzügige Auslegung)
-
-        for (const auto* ops : { &globalOps, &masterOps, &groupOps, &regionOps })
-            for (const auto& op : *ops)
-                apply (r, op.first, op.second);
+        for (const auto& op : regionOps)
+        {
+            opLine = op.line;
+            apply (r, op.name, op.value);
+        }
         // Mit group= zählt die Gruppen-Polyphonie über diese Nummer (wie in der SFZ-Spezifikation), auch über
         // mehrere <group>-Header hinweg; eigener Zahlenbereich, damit sie nicht mit den Header-Indizes kollidiert
         if (r.group != 0)
@@ -434,11 +499,26 @@ private:
         {
             result.warnings.push_back ("Region without sample (line " + std::to_string (regionLine) + ")");
         }
+        else if (r.samplePath[0] == '*')
+        {
+            // Eingebaute Generatoren der SFZ-Spezifikation (seit 23.11.2026): *silence ist verbreitet als Platzhalter,
+            // z. B. für stumme Keyswitch- oder Release-Regionen – stillschweigend auslassen (klingt ja ohnehin nicht).
+            // *sine, *saw, *square, *triangle, *noise … kann Märmel nicht erzeugen: einmal melden, aber nicht als
+            // fehlendes Sample zählen (sonst erschiene „MISSING SAMPLES“, obwohl das Instrument in Ordnung ist).
+            if (toLower (r.samplePath) != "*silence")
+                warnOnce ("Built-in generator '" + r.samplePath + "' is not supported, region skipped");
+        }
         else
         {
+            if (r.seqLength > 1 && r.seqPosition > r.seqLength)   // bei seq_length 1 gilt seq_position nicht (spielt immer)
+                warnOnce ("seq_position " + std::to_string (r.seqPosition) + " is greater than seq_length "
+                          + std::to_string (r.seqLength) + " - region never plays (line " + std::to_string (regionLine) + ")");
             r.loKey = std::max (0, r.loKey);
             r.hiKey = std::min (127, r.hiKey);
-            r.samplePath = defaultPath + r.samplePath;
+            // default_path nur vor relative Pfade setzen (seit 23.11.2026): vor "/Users/…" oder "C:/…" ergäbe es
+            // einen unsinnigen Pfad wie "Samples//Users/…"
+            if (! isAbsolutePath (r.samplePath))
+                r.samplePath = defaultPath + r.samplePath;
             result.regions.push_back (std::move (r));
         }
 
@@ -500,7 +580,12 @@ bool SfzParser::parseNote (const std::string& valueRaw, int octaveOffset, int no
 ParsedInstrument SfzParser::parse (const std::string& text)
 {
     ParserState state;
-    const std::string clean = stripComments (text);
+    // UTF-8-Kennung (BOM, Bytes EF BB BF) am Anfang überspringen (seit 23.11.2026): Sie ist unsichtbar, würde aber den
+    // ersten Header verdecken – „<control>“ würde nicht erkannt, default_path ginge verloren und alle Samples
+    // fehlten. Ältere Windows-Editoren (Notepad) schreiben sie.
+    const bool hasBom = text.size() >= 3 && (unsigned char) text[0] == 0xEF
+                        && (unsigned char) text[1] == 0xBB && (unsigned char) text[2] == 0xBF;
+    const std::string clean = stripComments (unifyLineEnds (hasBom ? text.substr (3) : text));
 
     size_t lineStart = 0;
     int lineNumber = 0;
