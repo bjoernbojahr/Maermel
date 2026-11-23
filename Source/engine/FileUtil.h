@@ -36,6 +36,15 @@ inline constexpr const char* kPathSeparators = "/";
 inline bool isPathSeparator (char c) noexcept { return c == '/'; }
 #endif
 
+// "/Users/..." (macOS, Linux) oder "C:/..." (Windows): absoluter Pfad, nicht relativ zur SFZ-Datei auflösen.
+// Gemeinsam für Parser (default_path) und Loader (seit 23.11.2026, vorher nur in Instrument.cpp).
+inline bool isAbsolutePath (const std::string& p)
+{
+    if (! p.empty() && isPathSeparator (p[0]))   // auch Windows-Netzwerkpfade "\\server\..."
+        return true;
+    return p.size() > 2 && std::isalpha ((unsigned char) p[0]) && p[1] == ':' && isPathSeparator (p[2]);
+}
+
 // --- Zwei Schreibweisen von Umlauten und Akzenten -------------------------------------------------------
 // „ö“ kann in Dateinamen als ein Zeichen (U+00F6, zusammengesetzt) oder als „o“ + kombinierendes Trema
 // (U+006F U+0308, zerlegt) gespeichert sein. macOS behandelt beide als gleich, Windows und Linux nicht.
