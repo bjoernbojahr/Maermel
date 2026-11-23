@@ -38,6 +38,17 @@ bool readWholeFile (const std::string& path, Bytes& out)
     return (bool) f;
 }
 
+// Die ersten 4 Bytes der Datei (Formatkennung), ohne die ganze Datei zu lesen
+std::string fileTag (const std::string& path)
+{
+    std::ifstream f;
+    openForReading (f, path);
+    char tag[4] = {};
+    if (! f || ! f.read (tag, 4))
+        return {};
+    return std::string (tag, 4);
+}
+
 struct Reader
 {
     const Bytes& d;
@@ -73,11 +84,6 @@ bool plausibleChunkAt (const Reader& r, size_t p, bool bigEndian) noexcept
     return size <= r.d.size() - (p + 8);
 }
 
-// Position des nächsten Chunks. Nach Vorschrift folgt auf einen Chunk ungerader Länge ein Füllbyte.
-// Manche Programme vergessen es (bekannt beim 7 Byte langen WAV-„inst“-Chunk); dann stünde der nächste Chunk
-// ein Byte früher, und ohne Korrektur gingen alle folgenden Chunks verloren – bis hin zu „data“.
-// Regel: Steht an der korrekten Position (mit Füllbyte) ein plausibler Chunk-Kopf, gilt sie – gültige Dateien
-// werden also nie anders gelesen. Nur wenn dort keiner steht, aber ohne Füllbyte einer, wird diese genommen.
 // Bekannte Kennungen in WAV- und AIFF-Dateien (für die Entscheidung bei fehlendem Füllbyte)
 bool knownChunkId (const unsigned char* c) noexcept
 {
@@ -103,6 +109,11 @@ bool readWithoutPadding (bool paddedOk, bool unpaddedOk, bool paddedKnown, bool 
     return padByte != 0;
 }
 
+// Position des nächsten Chunks. Nach Vorschrift folgt auf einen Chunk ungerader Länge ein Füllbyte.
+// Manche Programme vergessen es (bekannt beim 7 Byte langen WAV-„inst“-Chunk); dann stünde der nächste Chunk
+// ein Byte früher, und ohne Korrektur gingen alle folgenden Chunks verloren – bis hin zu „data“.
+// Regel: Steht an der korrekten Position (mit Füllbyte) ein plausibler Chunk-Kopf, gilt sie – gültige Dateien
+// werden also nie anders gelesen. Nur wenn dort keiner steht, aber ohne Füllbyte einer, wird diese genommen.
 size_t nextChunkPosition (const Reader& r, size_t body, uint32_t size, bool bigEndian) noexcept
 {
     const size_t padded = body + size + (size & 1);
@@ -133,6 +144,17 @@ double extended80 (const uint8_t* p)
 }
 
 enum class Encoding { PcmInt, Float };
+
+// WAV: Bytes je Sample in der Datei. Normalerweise (bits + 7) / 8. Manche Programme schreiben 24 Bit in
+// 4-Byte-Containern, ohne das in wBitsPerSample anzugeben (dort steht 24); verraten wird es nur durch
+// nBlockAlign = 4 × Kanäle. Mit 3 Byte Schrittweite gelesen käme Rauschen heraus (seit 23.11.2026).
+// Gilt beim Laden, bei der Speicherschätzung und beim Lesen der Kopfdaten gleich.
+int wavBytesPerSample (int bits, int channels, int blockAlign)
+{
+    if (bits == 24 && channels > 0 && blockAlign == 4 * channels)
+        return 4;
+    return (bits + 7) / 8;
+}
 
 // Wandelt Rohdaten in das Speicherformat um. bigEndian gilt für AIFF, signed8 ebenfalls.
 bool convertPcm (const uint8_t* src, size_t srcBytes, int bits, Encoding enc, bool bigEndian, bool signed8,
@@ -229,7 +251,7 @@ bool loadWav (const Bytes& d, SampleData& out, std::string& error)
 {
     Reader r { d };
     size_t pos = 12;
-    int formatTag = 0, bits = 0;
+    int formatTag = 0, bits = 0, blockAlign = 0;
     size_t dataPos = 0, dataSize = 0;
     bool haveFmt = false, haveData = false, haveSmpl = false;
     int64_t smplStart = -1, smplEnd = -1;
@@ -246,6 +268,7 @@ bool loadWav (const Bytes& d, SampleData& out, std::string& error)
             formatTag = r.le16 (body);
             out.numChannels = r.le16 (body + 2);
             out.sampleRate = r.le32 (body + 4);
+            blockAlign = r.le16 (body + 12);
             bits = r.le16 (body + 14);
             if (formatTag == 0xFFFE && size >= 26)
                 formatTag = r.le16 (body + 24);      // WAVE_FORMAT_EXTENSIBLE: Unterformat
@@ -286,9 +309,25 @@ bool loadWav (const Bytes& d, SampleData& out, std::string& error)
         return false;
     }
 
+    // 24 Bit im 4-Byte-Container (siehe wavBytesPerSample): wie 32 Bit lesen, als 24 Bit anzeigen
+    const bool padded24 = enc == Encoding::PcmInt && wavBytesPerSample (bits, out.numChannels, blockAlign) == 4 && bits == 24;
     out.bitsPerSample = bits;
-    if (! convertPcm (&d[dataPos], dataSize, bits, enc, false, false, out, error))
+    // d.data() + dataPos statt &d[dataPos]: Ein data-Chunk mit Länge 0 ganz am Dateiende ergäbe &d[d.size()],
+    // einen Zugriff hinter das Vektor-Ende (Debug-Builds brechen dort ab). Gelesen werden dann 0 Bytes.
+    if (! convertPcm (d.data() + dataPos, dataSize, padded24 ? 32 : bits, enc, false, false, out, error))
         return false;
+    if (padded24)
+    {
+        // Üblich: die 24 Bit stehen oben, die Füllbits unten (dann stimmt das Ergebnis schon). Stehen sie unten
+        // (Füllbits oben), ist das unterste Byte belegt – dann um 8 Bit nach oben schieben (linksbündig).
+        bool lowByteUsed = false;
+        for (size_t i = 0; i < out.int32Data.size() && i < 65536 && ! lowByteUsed; ++i)
+            if ((out.int32Data[i] & 0xFF) != 0)
+                lowByteUsed = true;
+        if (lowByteUsed)
+            for (auto& s : out.int32Data)
+                s = (int32_t) ((uint32_t) s << 8);
+    }
 
     if (smplStart >= 0 && smplEnd > smplStart && smplStart < out.numFrames)
     {
@@ -327,7 +366,9 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
                 if (r.tag (body + 18, "sowt"))                               littleEndianData = true;
                 else if (r.tag (body + 18, "fl32") || r.tag (body + 18, "FL32")) isFloat = true;
                 else if (r.tag (body + 18, "fl64") || r.tag (body + 18, "FL64")) isFloat = true;
-                else if (! r.tag (body + 18, "NONE") && ! r.tag (body + 18, "twos"))
+                // in24/in32 (von einigen Apple-Programmen): unkomprimiert wie NONE (seit 23.11.2026)
+                else if (! r.tag (body + 18, "NONE") && ! r.tag (body + 18, "twos")
+                         && ! r.tag (body + 18, "in24") && ! r.tag (body + 18, "in32"))
                 {
                     error = "Compressed AIFC files are not supported";
                     return false;
@@ -347,7 +388,10 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
             haveMark = true;
             const int count = r.be16 (body);
             size_t p = body + 2;
-            for (int i = 0; i < count && r.has (p, 7); ++i)
+            // Nur innerhalb des MARK-Chunks lesen (wie readHeaderInfo): Eine beschädigte Marker-Anzahl würde sonst
+            // Unsinn aus dem nächsten Chunk als Marker lesen (seit 23.11.2026)
+            const size_t markEnd = std::min<size_t> (body + size, d.size());
+            for (int i = 0; i < count && r.has (p, 7) && p + 7 <= markEnd; ++i)
             {
                 const int id = (int16_t) r.be16 (p);
                 markers[id] = r.be32 (p + 2);
@@ -375,8 +419,15 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
         return false;
     }
 
+    // Audiodaten müssen innerhalb der Datei beginnen (offset im SSND-Chunk kann bei beschädigten Dateien dahinter
+    // zeigen). d.data() + dataPos statt &d[dataPos]: kein Zugriff hinter das Vektor-Ende.
+    if (dataPos > d.size())
+    {
+        error = "Damaged file: audio data starts beyond the end of the file";
+        return false;
+    }
     out.bitsPerSample = bits;
-    if (! convertPcm (&d[dataPos], dataSize, bits, isFloat ? Encoding::Float : Encoding::PcmInt,
+    if (! convertPcm (d.data() + dataPos, dataSize, bits, isFloat ? Encoding::Float : Encoding::PcmInt,
                       ! littleEndianData, true, out, error))
         return false;
 
@@ -455,7 +506,7 @@ uint64_t sampleMemoryFromHeader (const std::string& path)
     auto be32 = [] (const unsigned char* p) { return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) | ((uint32_t) p[2] << 8) | (uint32_t) p[3]; };
     auto be16 = [] (const unsigned char* p) { return ((uint32_t) p[0] << 8) | (uint32_t) p[1]; };
 
-    int channels = 0, bits = 0; bool isFloat = false;
+    int channels = 0, bits = 0, blockAlign = 0; bool isFloat = false;
     uint64_t dataBytes = 0, aiffFrames = 0;
     bool haveFormat = false, haveData = false;
 
@@ -468,10 +519,12 @@ uint64_t sampleMemoryFromHeader (const std::string& path)
         const uint32_t size = wav ? le32 (c + 4) : be32 (c + 4);
         const uint64_t body = pos + 8;
         unsigned char b[26] = {};
-        if (wav && std::memcmp (c, "fmt ", 4) == 0 && r.read (body, b, std::min<uint32_t> (size, 26)))
+        // Wie beim Laden gilt jeweils der erste fmt-Chunk (seit 23.11.2026; vorher hätte ein zweiter überschrieben)
+        if (wav && std::memcmp (c, "fmt ", 4) == 0 && ! haveFormat && r.read (body, b, std::min<uint32_t> (size, 26)))
         {
             uint32_t tag = le16 (b);
             channels = (int) le16 (b + 2);
+            blockAlign = (int) le16 (b + 12);
             bits = (int) le16 (b + 14);
             if (tag == 0xFFFE && size >= 26) tag = le16 (b + 24);   // WAVE_FORMAT_EXTENSIBLE
             isFloat = tag == 3;
@@ -521,7 +574,7 @@ uint64_t sampleMemoryFromHeader (const std::string& path)
     {
         if (! haveData)
             return 0;
-        const uint64_t fileBytesPerFrame = (uint64_t) channels * (uint64_t) ((bits + 7) / 8);
+        const uint64_t fileBytesPerFrame = (uint64_t) channels * (uint64_t) wavBytesPerSample (bits, channels, blockAlign);
         return fileBytesPerFrame == 0 ? 0 : dataBytes / fileBytesPerFrame * (uint64_t) channels * perSample;
     }
     return aiffFrames * (uint64_t) channels * perSample;
@@ -566,7 +619,7 @@ HeaderInfo readHeaderInfo (const std::string& path)
     auto be32 = [] (const unsigned char* p) { return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) | ((uint32_t) p[2] << 8) | (uint32_t) p[3]; };
     auto be16 = [] (const unsigned char* p) { return ((uint32_t) p[0] << 8) | (uint32_t) p[1]; };
 
-    int channels = 0, bits = 0;
+    int channels = 0, bits = 0, blockAlign = 0;
     uint64_t dataBytes = 0;
     bool haveFmt = false, haveData = false, haveComm = false, haveSmpl = false, haveInst = false, haveMark = false;
 
@@ -583,6 +636,7 @@ HeaderInfo readHeaderInfo (const std::string& path)
         if (wav && std::memcmp (c, "fmt ", 4) == 0 && ! haveFmt && r.read (body, b, std::min<uint32_t> (size, 16)))
         {
             channels = (int) le16 (b + 2);
+            blockAlign = (int) le16 (b + 12);
             bits = (int) le16 (b + 14);
             haveFmt = true;
         }
@@ -662,7 +716,7 @@ HeaderInfo readHeaderInfo (const std::string& path)
     }
 
     if (wav && haveFmt && haveData && channels > 0 && bits > 0)
-        info.frames = (int64_t) (dataBytes / ((uint64_t) channels * (uint64_t) ((bits + 7) / 8)));
+        info.frames = (int64_t) (dataBytes / ((uint64_t) channels * (uint64_t) wavBytesPerSample (bits, channels, blockAlign)));
     info.ok = true;
     return info;
 }
@@ -712,6 +766,14 @@ bool loadSampleFile (const std::string& path, SampleData& out, std::string& erro
 {
     out = SampleData();
     Bytes d;
+    // RF64/BW64 (WAV über 4 GB, z. B. lange Aufnahmen): eigener Hinweis statt „not found“ – und vor dem Lesen
+    // geprüft, damit eine riesige Datei gar nicht erst in den Speicher kommt (seit 23.11.2026)
+    const std::string tag = fileTag (path);
+    if (tag == "RF64" || tag == "BW64")
+    {
+        error = "RF64/BW64 WAV files (over 4 GB) are not supported";
+        return false;
+    }
     if (! readWholeFile (path, d))
     {
         error = "File not found or unreadable";
