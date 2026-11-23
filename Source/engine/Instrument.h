@@ -32,9 +32,12 @@ struct PlayableRegion
     bool looping = false;                        // loop_continuous oder loop_sustain
     bool loopOnlyWhileHeld = false;              // loop_sustain
     int64_t loopStart = 0, loopEnd = 0;          // inklusiv, nur gültig wenn looping
-    const char* loopSource = "";                 // "SFZ", "Datei", "ganzes Sample" – für Info
+    const char* loopSource = "";                 // "SFZ", "file", "whole sample" – für Info
 
     // Zähler für Round Robin (seq_length/seq_position). Wird nur vom Audio-Thread verändert.
+    // Achtung: mutable in einem sonst unveränderlichen (const) Instrument. Das ist nur richtig, solange ausschließlich
+    // der Synth des Audio-Threads ein geladenes Instrument abspielt. Käme ein zweiter Leser hinzu (z. B. Vorhören,
+    // Export aus dem geladenen Instrument), müsste der Zähler in den Synth wandern (Array je Regionsnummer).
     mutable uint32_t seqCounter = 0;
 };
 
