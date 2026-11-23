@@ -101,15 +101,23 @@ void drawFrame (juce::Graphics& g, juce::Rectangle<float> r, const juce::String&
     drawLabel (g, title, r.getX() + 16.0f, r.getY() - 8.0f, 12.0f, juce::Justification::left);
 }
 
-void drawGlass (juce::Graphics& g, juce::Rectangle<float> r, float radius)
+void drawGlass (juce::Graphics& g, juce::Rectangle<float> r, float radius, float topEdge)
 {
-    g.setColour (juce::Colour (20, 23, 27));
+    const juce::Colour rim (20, 23, 27);
+    g.setColour (rim);
     g.fillRoundedRectangle (r.expanded (1.0f), radius + 1.0f);
     g.setColour (juce::Colour (5, 7, 9));
     g.fillRoundedRectangle (r, radius);
 
-    // leichter Glanz in der oberen Hälfte
-    const auto top = r.withHeight (r.getHeight() * 0.45f).reduced (radius, 0.0f);
+    // Dunkler Rand oben innen (wie eine leicht vertiefte Kante): Der Glanz beginnt erst darunter.
+    // In Randfarbe, zwischen den Rundungen der Ecken; bei hoher Auflösung (Retina) entsprechend mehr Pixel.
+    const float edge = juce::jlimit (0.0f, r.getHeight() * 0.25f, topEdge);
+    g.setColour (rim);
+    g.fillRect (r.getX() + radius, r.getY(), r.getWidth() - 2.0f * radius, edge);
+
+    // leichter Glanz in der oberen Hälfte (unter dem dunklen Rand)
+    const auto top = juce::Rectangle<float> (r.getX(), r.getY() + edge, r.getWidth(), r.getHeight() * 0.45f - edge)
+                         .reduced (radius, 0.0f);
     juce::ColourGradient sheen (juce::Colours::white.withAlpha (0.10f), top.getX(), top.getY(),
                                 juce::Colours::white.withAlpha (0.0f), top.getX(), top.getBottom(), false);
     g.setGradientFill (sheen);
