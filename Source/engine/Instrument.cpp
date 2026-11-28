@@ -10,7 +10,6 @@
 #include "SfzParser.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -27,8 +26,6 @@ std::string directoryOf (const std::string& path)
     const auto slash = path.find_last_of (kPathSeparators);
     return slash == std::string::npos ? std::string() : path.substr (0, slash + 1);
 }
-
-// isAbsolutePath: siehe FileUtil.h
 
 std::string regionName (const PlayableRegion& r)
 {
