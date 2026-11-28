@@ -348,6 +348,7 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
     bool haveComm = false, haveSsnd = false, haveMark = false, haveInst = false;   // doppelte Chunks: der erste gilt
     bool littleEndianData = false, isFloat = false;
     size_t dataPos = 0, dataSize = 0;
+    uint32_t commFrames = 0;                  // Anzahl Frames laut COMM (maßgeblich für die Länge)
     std::map<int, uint32_t> markers;
     int loopMode = 0, loopBeginId = -1, loopEndId = -1;
 
@@ -359,6 +360,7 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
         if (r.tag (pos, "COMM") && r.has (body, 18) && ! haveComm)
         {
             out.numChannels = (int16_t) r.be16 (body);
+            commFrames = r.be32 (body + 2);
             bits = (int16_t) r.be16 (body + 6);
             out.sampleRate = extended80 (&d[body + 8]);
             if (isAifc && r.has (body + 18, 4))
@@ -380,7 +382,14 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
         {
             const uint32_t offset = r.be32 (body);
             dataPos = body + 8 + offset;
-            dataSize = (dataPos < d.size()) ? std::min<size_t> (size - 8 - offset, d.size() - dataPos) : 0;
+            // Chunk-Größe minus offset/blockSize (8 Byte) und Offset. Ist die Chunk-Größe unplausibel klein (beschädigte
+            // oder nicht fertig geschriebene Datei), gilt der Rest der Datei – begrenzt wird danach durch die
+            // Frame-Anzahl aus COMM. Bis 1.0.2 ergab das hier einen Unterlauf, den nur das folgende min zufällig
+            // auffing (seit 1.0.3 ausdrücklich so).
+            const uint64_t restOfFile = (dataPos < d.size()) ? (uint64_t) (d.size() - dataPos) : 0u;
+            const uint64_t chunkData = ((uint64_t) size >= 8u + (uint64_t) offset) ? (uint64_t) size - 8u - offset
+                                                                                  : restOfFile;
+            dataSize = (dataPos < d.size()) ? (size_t) std::min<uint64_t> (chunkData, d.size() - dataPos) : 0;
             haveSsnd = true;
         }
         else if (r.tag (pos, "MARK") && r.has (body, 2) && ! haveMark)
@@ -426,6 +435,19 @@ bool loadAiff (const Bytes& d, SampleData& out, std::string& error)
         error = "Damaged file: audio data starts beyond the end of the file";
         return false;
     }
+    // Länge laut COMM (seit 1.0.3): Maßgeblich ist nach der AIFF-Spezifikation die Frame-Anzahl in COMM, nicht die
+    // Größe des SSND-Chunks. Manche Programme hängen Füll- oder Restbytes an SSND an; die wurden sonst als Audio
+    // mitgespielt (Knacken am Sample-Ende bzw. beim Loop über das ganze Sample). Außerdem rechnet die
+    // Speicherschätzung (sampleMemoryFromHeader) mit den COMM-Frames – so passen beide wieder zusammen.
+    // Ist SSND kürzer als angegeben, bleibt es bei den vorhandenen Daten.
+    if (commFrames > 0 && out.numChannels > 0 && bits > 0)
+    {
+        const uint64_t bytesPerSample = (uint64_t) (bits + 7) / 8u;
+        const uint64_t commBytes = (uint64_t) commFrames * (uint64_t) out.numChannels * bytesPerSample;
+        if (commBytes < dataSize)
+            dataSize = (size_t) commBytes;
+    }
+
     out.bitsPerSample = bits;
     if (! convertPcm (d.data() + dataPos, dataSize, bits, isFloat ? Encoding::Float : Encoding::PcmInt,
                       ! littleEndianData, true, out, error))
