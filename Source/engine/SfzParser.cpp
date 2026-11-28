@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <set>
 #include <utility>
 
@@ -110,7 +111,54 @@ std::string stripComments (const std::string& text)
     return out;
 }
 
-// Findet ab 'from' den Beginn des nächsten Opcodes ("name=") oder Headers ("<").
+// Sieht ein Name wie ein SFZ-Opcode aus? Nur Kleinbuchstaben, Ziffern und Unterstrich, beginnend mit einem
+// Buchstaben (alle Opcodes der SFZ-Beschreibung sind so geschrieben). Benutzt nur, wenn zwischen Name und '='
+// Leerzeichen stehen – dann soll z. B. ein Wort aus einem Dateinamen nicht als Opcode gelten.
+bool looksLikeOpcodeName (const std::string& line, size_t from, size_t to)
+{
+    if (to <= from || ! (line[from] >= 'a' && line[from] <= 'z'))
+        return false;
+    for (size_t i = from; i < to; ++i)
+    {
+        const char c = line[i];
+        if (! ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+            return false;
+    }
+    return true;
+}
+
+// Beginnt nach dem Leerraum ab Position 'i' (Leerzeichen/Tab) ein Header oder Opcode? Liefert dessen Anfang,
+// sonst npos. Als Opcode gilt:
+//   "name=" – Name direkt vor '=' (wie bisher, beliebige Groß-/Kleinschreibung), oder
+//   "name =" / "name  =  wert" – Leerzeichen oder Tabs zwischen Name und '=' (seit 1.0.3; manche handgeschriebenen
+//   Dateien, z. B. „key =66“). Dann nur mit einem Namen, der wie ein Opcode aussieht (looksLikeOpcodeName).
+size_t tokenAfterSpace (const std::string& line, size_t i)
+{
+    size_t j = i;
+    while (j < line.size() && (line[j] == ' ' || line[j] == '\t'))
+        ++j;
+    if (j == i || j >= line.size())
+        return std::string::npos;          // kein Leerraum davor bzw. Zeilenende
+    if (line[j] == '<')
+        return j;
+
+    size_t k = j;
+    while (k < line.size() && isNameChar (line[k]))
+        ++k;
+    if (k == j)
+        return std::string::npos;
+
+    size_t m = k;
+    while (m < line.size() && (line[m] == ' ' || line[m] == '\t'))
+        ++m;
+    if (m >= line.size() || line[m] != '=')
+        return std::string::npos;
+    if (m == k || looksLikeOpcodeName (line, j, k))
+        return j;
+    return std::string::npos;
+}
+
+// Findet ab 'from' den Beginn des nächsten Opcodes oder Headers ("<").
 // Ein Opcode beginnt nur nach einem Leerzeichen, damit '=' in Werten nicht stört.
 size_t findNextToken (const std::string& line, size_t from)
 {
@@ -118,24 +166,60 @@ size_t findNextToken (const std::string& line, size_t from)
     {
         if (line[i] == '<')
             return i;
-
-        if ((line[i] == ' ' || line[i] == '\t') && i + 1 < line.size())
+        if (line[i] == ' ' || line[i] == '\t')
         {
-            size_t j = i + 1;
-            while (j < line.size() && (line[j] == ' ' || line[j] == '\t'))
-                ++j;
-
-            size_t k = j;
-            while (k < line.size() && isNameChar (line[k]))
-                ++k;
-
-            if (k > j && k < line.size() && line[k] == '=')
-                return j;
-            if (j < line.size() && line[j] == '<')
-                return j;
+            const size_t token = tokenAfterSpace (line, i);
+            if (token != std::string::npos)
+                return token;
         }
     }
     return std::string::npos;
+}
+
+// Geschützter Anfang eines Pfad-Werts (seit 1.0.3): Bis zu dieser Position wird im Wert NICHT nach dem nächsten
+// Opcode gesucht – so bleiben Dateinamen mit Leerzeichen und '=' ganz („Piano = Soft.wav“, „Mix a=b.wav“).
+//   sample=       bis hinter die Audio-Endung (.wav, .aif, .aiff, .flac – Groß/klein egal), wenn danach das
+//                 Zeilenende oder der nächste Opcode bzw. Header folgt. Die erste solche Stelle gilt, so dass auch
+//                 ein Ordner wie „Alt.wav Dateien/“ nicht stört.
+//   default_path= bis hinter den Ordner-Trenner ('/' oder '\\'), wenn danach dasselbe gilt.
+// Ohne passende Stelle (z. B. "*sine" oder ein Pfad ohne Endung) gibt es keinen Schutz – Suche ab Wertbeginn wie bisher.
+size_t protectedPathEnd (const std::string& line, size_t valueStart, const std::string& nameLower)
+{
+    const bool isSample = (nameLower == "sample");
+    if (! isSample && nameLower != "default_path")
+        return valueStart;
+
+    const char* extensions[] = { ".wav", ".aiff", ".aif", ".flac" };
+    for (size_t i = valueStart; i < line.size(); ++i)
+    {
+        size_t endOfPath = std::string::npos;
+        if (isSample)
+        {
+            for (const char* ext : extensions)
+            {
+                const size_t n = std::strlen (ext);
+                if (i + n <= line.size() && toLower (line.substr (i, n)) == ext)
+                {
+                    endOfPath = i + n;
+                    break;
+                }
+            }
+        }
+        else if (line[i] == '/' || line[i] == '\\')
+        {
+            endOfPath = i + 1;
+        }
+        if (endOfPath == std::string::npos)
+            continue;
+
+        // Passt nur, wenn danach nichts mehr kommt (Leerraum bis Zeilenende) oder der nächste Opcode/Header
+        size_t rest = endOfPath;
+        while (rest < line.size() && (line[rest] == ' ' || line[rest] == '\t'))
+            ++rest;
+        if (rest >= line.size() || line[rest] == '<' || tokenAfterSpace (line, endOfPath) != std::string::npos)
+            return endOfPath;
+    }
+    return valueStart;
 }
 
 bool parseInt64 (const std::string& v, int64_t& out)
@@ -182,6 +266,7 @@ class ParserState
 {
 public:
     ParsedInstrument result;
+    bool warnedPreprocessor = false;   // Warnung zu #define/#include schon ausgegeben (nur einmal je Datei)
 
     void header (const std::string& nameRaw, int line)
     {
@@ -245,6 +330,7 @@ private:
     // bisher zuletzt angewendet werden und damit gewinnen.
     Region groupTemplate;
     bool templateValid = false;
+
 
     // Eine Warnung nur einmal ausgeben (gleicher Text = gleiche Stelle in der Datei)
     void warnOnce (const std::string& text)
@@ -622,8 +708,12 @@ ParsedInstrument SfzParser::parse (const std::string& text)
 
             if (line[pos] == '#')
             {
-                state.result.warnings.push_back ("#define/#include are not supported yet (line "
-                                                 + std::to_string (lineNumber) + ")");
+                // Einmal je Datei statt je Zeile (seit 1.0.3): Bibliotheken mit vielen #define-Zeilen erzeugten sonst
+                // eine lange Liste gleicher Warnungen. Unterstützung von #define/#include ist für später vorgemerkt.
+                if (! state.warnedPreprocessor)
+                    state.result.warnings.push_back ("#define/#include are not supported yet (first in line "
+                                                     + std::to_string (lineNumber) + ")");
+                state.warnedPreprocessor = true;
                 break;
             }
 
@@ -635,7 +725,8 @@ ParsedInstrument SfzParser::parse (const std::string& text)
             }
 
             const std::string name = trim (line.substr (pos, eq - pos));
-            const size_t next = findNextToken (line, eq + 1);
+            // Bei sample= und default_path= erst hinter dem Pfad nach dem nächsten Opcode suchen (protectedPathEnd)
+            const size_t next = findNextToken (line, protectedPathEnd (line, eq + 1, toLower (name)));
             const std::string value = trim (line.substr (eq + 1, next == std::string::npos ? std::string::npos
                                                                                            : next - eq - 1));
             state.opcode (name, value, lineNumber);
