@@ -100,9 +100,9 @@ private:
     InputWatcher inputWatcher;
 
     // --- Aufbau ---
-    void addKnob (juce::Slider& s, const char* id, const juce::String& displayName, float cx, float cy, float radius);
-    void addVFader (juce::Slider& s, const char* id, const juce::String& displayName, float cx, float y0, float y1, bool bipolar);
-    void addHFader (juce::Slider& s, const char* id, const juce::String& displayName, float x0, float x1, float cy,
+    void addKnob (juce::Slider& s, const juce::String& id, const juce::String& displayName, float cx, float cy, float radius);
+    void addVFader (juce::Slider& s, const juce::String& id, const juce::String& displayName, float cx, float y0, float y1, bool bipolar);
+    void addHFader (juce::Slider& s, const juce::String& id, const juce::String& displayName, float x0, float x1, float cy,
                     bool bipolar, bool compact);
     void attachSlider (juce::Slider& s, const juce::String& id, const juce::String& displayName);
     void placeButton (juce::Button& b, juce::Rectangle<float> key);   // Bounds = sichtbare Taste + Leuchtrand
@@ -127,19 +127,19 @@ private:
     bool shownLiveEdit = false;   // Stand der roten LED über EDIT (Live-Edit-Überwachung läuft)
 
     // --- Sample Start and Tune ---
-    juce::Slider start, startVel, coarse, fine, keyShift, crush, pitchBend, wheelPitch;
+    juce::Slider start, startVel, coarse, fine, keyShift, velOffset, pitchBend, wheelPitch;
     juce::TextButton rndButton { "RND" };
-    // Umschalter unter dem Regler: zeigt den gewählten Effekt („LO-FI“ oder „CHORUS“), Klick wechselt
-    juce::TextButton fxButton { "LO-FI" };
-    bool shownChorus = false;
-    void toggleFxMode();
-    juce::String fxStatusText() const;   // z. B. „CHORUS 50 %“ oder „LO-FI 11.7 bit/12.6 kHz“
 
     // --- Filter ---
     juce::Slider cutoff, reso, drive, filterKey, filterVelCut, filterVelEnv, filterEnv, wheelFilter;
 
     // --- Amp ---
-    juce::Slider wheelAmp, velOffset, ampVel, ampKey, volume;   // wheelAmp: WHEEL LFO der Amp-Sektion (LFO-Volume und -Pan)
+    juce::Slider crush, wheelAmp, ampVel, ampKey, volume;   // crush: LO-FI/CHORUS; wheelAmp: WHEEL LFO (LFO-Volume und -Pan)
+    // Umschalter unter dem LO-FI-Regler: zeigt den gewählten Effekt („LO-FI“ oder „CHORUS“), Klick wechselt
+    juce::TextButton fxButton { "LO-FI" };
+    bool shownChorus = false;
+    void toggleFxMode();
+    juce::String fxStatusText() const;   // z. B. „CHORUS 50 %“ oder „LO-FI 11.7 bit/12.6 kHz“
 
     // --- LFO: [0] = Poly, [1] = Mono ---
     struct Lfo
