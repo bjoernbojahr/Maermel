@@ -112,7 +112,11 @@ public:
         stage = Stage::Attack;
         if (effectiveAttack <= 0.0f)
         {
-            level = 1.0f;
+            // Ohne Attack: sofort voll, dann Decay. Ist auch Decay 0, gleich auf dem Sustain-Ziel beginnen
+            // (seit 1.0.3) – sonst gäbe es durch den Mindest-Decay (siehe updateCoefficients) eine kurze Spitze
+            // von 100 % am Notenanfang. (Bis 1.0.2 stand hier immer 1; ohne Mindest-Decay lag der Pegel schon beim
+            // ersten next() auf dem Sustain – hörbar ist beides gleich.)
+            level = (effectiveDecay <= 0.0f) ? sustainTarget() : 1.0f;
             stage = Stage::Decay;
         }
     }
@@ -161,9 +165,7 @@ public:
                     const float base = std::max (params.sustainLevel, 0.001f);   // auch aus Sustain 0 heraus
                     sustainGain = std::min (sustainGain * sustainRiseFactor, 1.0f / base);
                 }
-                const float target = (params.sustainTimeSeconds > 0.0f)
-                                       ? std::min (1.0f, std::max (params.sustainLevel, 0.001f) * sustainGain)
-                                       : params.sustainLevel * sustainGain;
+                const float target = sustainTarget();
 
                 // Decay folgt dem (ggf. wandernden) Ziel; im Sustain gleiten Änderungen in ~20 ms
                 const float previous = level;
@@ -224,6 +226,13 @@ public:
 
     // Sustain-Phase ohne hörbaren Pegel und ohne Aussicht auf Anstieg: Sustain-Regler auf 0 (dann ist auch das Ziel
     // von T immer 0) und Pegel unter −100 dB. Benutzt für vom Pedal gehaltene Stimmen (seit 23.11.2026, siehe Synth).
+    // Bewusst endet die Hüllkurve in diesem Zustand NICHT selbst (geprüft und verworfen am 25.11.2026): Bei gedrückter
+    // Taste muss die Stimme weiterlaufen, denn
+    //  - der Sustain-Regler kann sie während der Note wieder anheben,
+    //  - DC → Volume (z. B. Aftertouch) hebt den Sustain an (sustainLift im Synth) – so kann eine Note per Druck
+    //    wieder anschwellen; davon weiß die Hüllkurve nichts,
+    //  - Mono/Legato bindet nur an eine noch klingende Stimme.
+    // Ob eine stille Stimme enden darf, entscheidet deshalb der Synth (Taste los, nur Pedal, keine Anhebung).
     bool isSilentSustain() const noexcept
     {
         return stage == Stage::Sustain && params.sustainLevel <= 0.0f && level < 1.0e-5f;
@@ -248,6 +257,15 @@ private:
         if (e >= s)
             return std::min (1.0f, lifted + (e - s) * (1.0f - lifted) / (1.0f - s));
         return e * lifted / s;                              // nur bei s > 0 erreichbar
+    }
+
+    // Aktuelles Ziel von Decay/Sustain: Sustain-Pegel, verschoben durch T (gleichmäßig in dB, nach oben höchstens 100 %;
+    // bei T > 0 auch aus Sustain 0 heraus, daher mindestens 0,001)
+    float sustainTarget() const noexcept
+    {
+        return (params.sustainTimeSeconds > 0.0f)
+                 ? std::min (1.0f, std::max (params.sustainLevel, 0.001f) * sustainGain)
+                 : params.sustainLevel * sustainGain;
     }
 
     // Faktor pro Sample, mit dem ein Abstand nach 'seconds' auf 10 % gefallen ist
@@ -280,7 +298,11 @@ private:
 
         attackIncrement = (effectiveAttack > 0.0f && sampleRate > 0.0)
                               ? (float) (1.0 / (effectiveAttack * sampleRate)) : 1.0f;
-        decayCoeff = coefficient (effectiveDecay);
+        // Decay 0 würde nach einem Attack in einem Sample von 100 % auf den Sustain-Pegel springen (Knacken mitten im
+        // Ton) – deshalb derselbe Mindestschutz wie beim Release (seit 1.0.3). Ohne Attack beginnt die Note bei
+        // Decay 0 gleich auf dem Sustain-Ziel (noteOn), dort wirkt der Mindestwert nicht. Auf der Oberfläche darf
+        // Decay bis 0 gehen.
+        decayCoeff = coefficient (std::max (effectiveDecay, kMinReleaseSeconds));
         // Release 0 würde knacken: intern mindestens 4 ms (−20 dB nach 4 ms, −40 dB nach 8 ms).
         // Auf der Oberfläche darf Release bis 0 gehen.
         releaseCoeff = coefficient (std::max (params.releaseSeconds * keyFactor, kMinReleaseSeconds));
