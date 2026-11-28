@@ -226,6 +226,7 @@ public:
     void controller (int number, int value) noexcept;   // Stand merken für loccN/hiccN
     void pitchBend (int value14Bit);                // 0 ... 16383, Mitte 8192
     void allNotesOff();
+    void resetControllers();                        // CC121 „Reset All Controllers“ (seit 1.0.3)
 
     // Addiert das Signal in die beiden Puffer.
     void render (float* left, float* right, int numSamples);
