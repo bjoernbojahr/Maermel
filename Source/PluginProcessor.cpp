@@ -35,8 +35,6 @@ juce::String pathWithoutUserName (const juce::File& file)
     return file.getFullPathName();
 }
 
-// Gegenstück beim Lesen: "~/…" auf den Home-Ordner dieses Rechners; ältere SFZP-Dateien mit vollständigem Pfad
-// werden weiter gelesen. Ein Pfad von einem anderen System (kein gültiger absoluter Pfad hier) ergibt keine Datei.
 // Datei zu einem UTF-8-Pfad aus der Engine (z. B. Sample-Pfad aus der SFZ), mit denselben Rückfällen wie die Engine
 // beim Lesen: andere Unicode-Form der Umlaute und (außer Windows) Groß/klein unabhängig. Nicht gefunden: der Pfad wie
 // angegeben (existsAsFile() ist dann false).
@@ -55,6 +53,9 @@ juce::File existingFile (const std::string& utf8Path)
                                                                                                         : juce::File();
 }
 
+// Gegenstück zu pathWithoutUserName beim Lesen: "~/…" auf den Home-Ordner dieses Rechners; ältere SFZP-Dateien mit
+// vollständigem Pfad werden weiter gelesen. Ein Pfad von einem anderen System (kein gültiger absoluter Pfad hier)
+// ergibt keine Datei.
 juce::File fileFromStoredPath (const juce::String& stored)
 {
     if (stored.startsWith ("~/") || stored.startsWith ("~\\"))
@@ -99,9 +100,73 @@ juce::NormalisableRange<float> curvedRange (float lo, float hi, float exponent =
 
 // Preset-Format (.sfzp und Zwischenablage)
 constexpr const char* kPresetTag = "MaermelPreset";
+// Version der Einstellungen in SFZP-Dateien, kopierten Einstellungen (Attribut "version") und DAW-Projekten
+// (Eigenschaft "stateVersion"; fehlt sie, ist das Projekt älter als 1.0.3).
+//  1 = bis 1.0.2
+//  2 = seit 1.0.3: Notenwerte des LFO-Sync streng von langsam nach schnell (siehe lfoNoteValues). Ältere Dateien
+//      werden beim Lesen umgerechnet (syncRateFromVersion1).
+constexpr int kSettingsVersion = 2;
 bool isPresetElement (const juce::XmlElement* xml)
 {
     return xml != nullptr && xml->hasTagName (kPresetTag);
+}
+
+// --- Gespeicherte Werte prüfen (seit 1.0.3) ---------------------------------
+// Beschädigte oder von Hand bearbeitete SFZP-Dateien, kopierte Einstellungen und Projekte dürfen keine unerwarteten
+// Parameterzustände erzeugen. Ohne diese Prüfung:
+//  - "nan" wurde von JUCE als NaN gelesen. NaN übersteht jede Klemmung (alle Vergleiche sind falsch), landet in der
+//    Engine und macht Filter und Glättung dauerhaft unbrauchbar (Stille oder Unsinn bis zum Neuladen).
+//  - Leerer oder unlesbarer Text ("", "abc") ergab 0 statt des Standardwerts – beim Cutoff also ein geschlossenes
+//    Filter (Regler ganz unten).
+//  - Werte außerhalb des Bereichs klemmt JUCE zwar, hält im Debug-Build aber jedes Mal per jassert an.
+
+// Zahlentext vereinheitlichen: Leerzeichen am Rand entfernen; ein Komma als Dezimalzeichen wird zum Punkt – aber
+// nur, wenn es genau EIN Komma ist und KEIN Punkt im Text steht ("0,5" → "0.5", "-6,5" → "-6.5"). So versteht eine
+// von Hand bearbeitete Datei dasselbe wie die Wertefelder der Oberfläche (ValueParsing.h, normalize). Texte wie
+// "1,000.5" oder "1,2,3" bleiben unverändert und gelten danach als unlesbar.
+juce::String unifiedNumberText (const juce::String& text)
+{
+    const juce::String t = text.trim();
+    int commas = 0;
+    for (int i = 0; i < t.length(); ++i)
+        if (t[i] == ',')
+            ++commas;
+    if (commas == 1 && ! t.containsChar ('.'))
+        return t.replaceCharacter (',', '.');
+    return t;
+}
+
+// Ist der (vereinheitlichte) Text eine Zahl? Erlaubt: Ziffern, Vorzeichen, Dezimalpunkt, Exponent (z. B. "-12.5",
+// "1e-3"); mindestens eine Ziffer. Bewusst eine einfache Schleife statt eines regulären Ausdrucks.
+bool isNumberText (const juce::String& t)
+{
+    if (t.isEmpty())
+        return false;
+    bool hasDigit = false;
+    for (int i = 0; i < t.length(); ++i)
+    {
+        const juce::juce_wchar c = t[i];
+        if (c >= '0' && c <= '9')
+            hasDigit = true;
+        else if (c != '.' && c != '-' && c != '+' && c != 'e' && c != 'E')
+            return false;
+    }
+    return hasDigit;
+}
+
+// Gespeicherter Wert eines Parameters (tatsächlicher Wert, z. B. dB oder Hz): unlesbar oder nicht endlich (NaN,
+// unendlich) → Standardwert des Parameters; sonst auf den Bereich des Parameters begrenzt. Dezimalkomma erlaubt.
+float storedParameterValue (const juce::RangedAudioParameter& parameter, const juce::String& text)
+{
+    const float fallback = parameter.convertFrom0to1 (parameter.getDefaultValue());
+    const juce::String number = unifiedNumberText (text);
+    if (! isNumberText (number))
+        return fallback;
+    const double value = number.getDoubleValue();
+    if (! std::isfinite (value))
+        return fallback;
+    const auto& range = parameter.getNormalisableRange();
+    return (float) juce::jlimit ((double) range.start, (double) range.end, value);
 }
 
 // Zeitregler 0 ... 1 → Anzeige 10 s × x^4,2 (Envelope::kTimeCurveExponent)
@@ -198,26 +263,13 @@ juce::String centText (float v, int)
 std::atomic<double> displaySampleRate { 44100.0 };
 // Anzeige des Reglers LO-FI/CHORUS in der DAW: im Chorus-Modus Prozent statt Bit/kHz. Der Text eines Parameters
 // kennt seine Instanz nicht; bei mehreren Instanzen mit verschiedenem Modus zeigt die DAW-Automation daher das
-// Format der zuletzt aktiven. Märmels eigene Anzeige ist davon nicht betroffen (sie fragt den Modus direkt ab).
+// Format der zuletzt aktiven. Märmels eigene Oberfläche nutzt diese beiden Werte nicht (seit 1.0.3): Sie ruft
+// lofiText/lofiValueFromText mit Modus und Samplerate ihrer eigenen Instanz auf.
 std::atomic<bool> displayChorusMode { false };
 
 juce::String crushText (float v, int)
 {
-    if (v <= 0.0f)
-        return "off";
-    if (displayChorusMode.load())
-        return juce::String (juce::roundToInt (v)) + " %";
-    // Bittiefe und Samplerate, z. B. "11.7 bit/12.6 kHz"
-    const float bits = maermel::Synth::crushBits (v);
-    const double sampleRate = displaySampleRate.load();
-    const int stage = maermel::Synth::crushHoldStage (bits, sampleRate);
-    juce::String text = juce::String (bits, 1) + " bit";
-    if (stage > 0)
-    {
-        const float khz = (float) (sampleRate * 2.0 / stage / 1000.0);
-        text << "/" << (khz < 20.0f ? juce::String (khz, 1) : juce::String (juce::roundToInt (khz))) << " kHz";   // kompakt fürs Display
-    }
-    return text;
+    return MaermelAudioProcessor::lofiText (v, displayChorusMode.load(), displaySampleRate.load());
 }
 
 juce::String cutoffText (float knob, int)
@@ -254,17 +306,45 @@ juce::String velDirectText (float v, int)
 // Freie Rate: 0,05 ... 30 Hz, gleichmäßig in Oktaven
 float lfoFreeHz (float knob) { return 0.05f * std::pow (600.0f, knob); }
 
-// Notenwerte für Sync, von langsam nach schnell, mit Länge in Vierteln
+// Standardstellung des Rate-Reglers: 4,8 Hz (Umkehrung von lfoFreeHz). Auch Rückfallwert bei unlesbarer Eingabe.
+const float kLfoDefaultKnob = std::log (4.8f / 0.05f) / std::log (600.0f);   // ≈ 0,7135
+
+// Notenwerte für Sync, streng von langsam nach schnell, mit Länge in Vierteln.
+// Gespeichert wird die Reglerstellung, also die Position in dieser Liste – Reihenfolge daher nicht mehr ändern.
+// Bis 1.0.2 standen 1/2T vor 1/4. und 1/4T vor 1/8.; der LFO wurde beim Aufdrehen an diesen Stellen kurz
+// langsamer. Ältere Projekte und Presets rechnet syncRateFromVersion1 beim Laden um.
 struct NoteValue { const char* name; double quarters; };
 const NoteValue lfoNoteValues[] = {
-    { "4/1", 16.0 }, { "2/1", 8.0 }, { "1/1", 4.0 }, { "1/2", 2.0 }, { "1/2T", 4.0 / 3.0 },
-    { "1/4.", 1.5 }, { "1/4", 1.0 }, { "1/4T", 2.0 / 3.0 }, { "1/8.", 0.75 }, { "1/8", 0.5 },
+    { "4/1", 16.0 }, { "2/1", 8.0 }, { "1/1", 4.0 }, { "1/2", 2.0 }, { "1/4.", 1.5 },
+    { "1/2T", 4.0 / 3.0 }, { "1/4", 1.0 }, { "1/8.", 0.75 }, { "1/4T", 2.0 / 3.0 }, { "1/8", 0.5 },
     { "1/8T", 1.0 / 3.0 }, { "1/16", 0.25 }, { "1/16T", 1.0 / 6.0 }, { "1/32", 0.125 } };
 constexpr int kNumNoteValues = (int) (sizeof (lfoNoteValues) / sizeof (lfoNoteValues[0]));
 
+int lfoNoteIndex (float knob)
+{
+    return juce::jlimit (0, kNumNoteValues - 1, juce::roundToInt (knob * (float) (kNumNoteValues - 1)));
+}
+
 const NoteValue& lfoNoteValue (float knob)
 {
-    return lfoNoteValues[juce::jlimit (0, kNumNoteValues - 1, juce::roundToInt (knob * (float) (kNumNoteValues - 1)))];
+    return lfoNoteValues[lfoNoteIndex (knob)];
+}
+
+// Umrechnung alter Einstellungen (Version 1, bis 1.0.2) bei eingeschaltetem Sync: Die Plätze 4 und 5 (1/2T, 1/4.)
+// sowie 7 und 8 (1/4T, 1/8.) waren vertauscht. Damit ein altes Projekt denselben Notenwert spielt, wandert die
+// Reglerstellung um genau einen Platz; alle anderen Stellungen bleiben unverändert. Nur beim Laden aufgerufen.
+float syncRateFromVersion1 (float knob)
+{
+    const int oldIndex = lfoNoteIndex (knob);
+    int newIndex = oldIndex;
+    if (oldIndex == 4) newIndex = 5;        // 1/2T
+    else if (oldIndex == 5) newIndex = 4;   // 1/4.
+    else if (oldIndex == 7) newIndex = 8;   // 1/4T
+    else if (oldIndex == 8) newIndex = 7;   // 1/8.
+    if (newIndex == oldIndex)
+        return knob;
+    // Abstand zur Rastmitte beibehalten (spielt bei Sync keine Rolle, aber so ändert sich nur der Platz)
+    return juce::jlimit (0.0f, 1.0f, knob + (float) (newIndex - oldIndex) / (float) (kNumNoteValues - 1));
 }
 
 // Linksstellung des Rate-Reglers = DC (konstanter Höchstwert statt LFO)
@@ -298,7 +378,7 @@ float lfoRateFromText (const juce::String& text)
         for (int i = 0; i < kNumNoteValues; ++i)
             if (text.trim().equalsIgnoreCase (lfoNoteValues[i].name))
                 return (float) i / (float) (kNumNoteValues - 1);
-    return maermel::parse::lfoRateKnob (plain (text), 0.685f);
+    return maermel::parse::lfoRateKnob (plain (text), kLfoDefaultKnob);   // unlesbar: Standard 4,8 Hz
 }
 
 const juce::StringArray lfoWaveNames { "Tri", "Sin", "Saw", "Sqr" };
@@ -324,66 +404,85 @@ MaermelAudioProcessor::MaermelAudioProcessor()
     for (auto* env : { &ampEnvParams, &filterEnvParams })
     {
         const juce::String prefix = (env == &ampEnvParams) ? "" : "f";
-        env->attack      = parameters.getRawParameterValue (prefix + "attack");
-        env->attackVel   = parameters.getRawParameterValue (prefix + "velattack");
-        env->decay       = parameters.getRawParameterValue (prefix + "decay");
-        env->decayVel    = parameters.getRawParameterValue (prefix + "veldecay");
-        env->sustain     = parameters.getRawParameterValue (prefix + "sustain");
-        env->sustainTime = parameters.getRawParameterValue (prefix + "sustaintime");
-        env->release     = parameters.getRawParameterValue (prefix + "release");
-        env->key         = parameters.getRawParameterValue (prefix == "" ? "ampkey" : "fkey");
+        env->attack      = rawParameter (prefix + "attack");
+        env->attackVel   = rawParameter (prefix + "velattack");
+        env->decay       = rawParameter (prefix + "decay");
+        env->decayVel    = rawParameter (prefix + "veldecay");
+        env->sustain     = rawParameter (prefix + "sustain");
+        env->sustainTime = rawParameter (prefix + "sustaintime");
+        env->release     = rawParameter (prefix + "release");
+        env->key         = rawParameter (prefix == "" ? "ampkey" : "fkey");
     }
-    volumeParam  = parameters.getRawParameterValue ("volume");
-    velocityParam = parameters.getRawParameterValue ("velocity");
-    wheelAmpParam = parameters.getRawParameterValue ("wheelamp");
-    atWheelParam = parameters.getRawParameterValue ("atwheel");
-    velOffsetParam = parameters.getRawParameterValue ("veloffset");
-    ampKeyScaleParam = parameters.getRawParameterValue ("ampkeyscale");
-    voiceModeParam = parameters.getRawParameterValue ("voicemode");
-    glideParam = parameters.getRawParameterValue (maermel::ids::glide);
-    startParam    = parameters.getRawParameterValue ("start");
-    startVelParam = parameters.getRawParameterValue ("startvel");
-    startRndParam = parameters.getRawParameterValue ("startrnd");
-    coarseParam   = parameters.getRawParameterValue ("coarse");
-    fineParam     = parameters.getRawParameterValue ("fine");
-    keyShiftParam = parameters.getRawParameterValue ("keyshift");
-    crushParam    = parameters.getRawParameterValue (maermel::ids::lofi);
-    fxModeParam   = parameters.getRawParameterValue ("fxmode");
-    pitchBendParam = parameters.getRawParameterValue ("pitchbend");
-    filterTypeParam = parameters.getRawParameterValue ("filtertype");
-    cutoffParam     = parameters.getRawParameterValue (maermel::ids::cutoff);
-    resonanceParam  = parameters.getRawParameterValue (maermel::ids::resonance);
-    driveParam      = parameters.getRawParameterValue (maermel::ids::drive);
-    filterKeyParam  = parameters.getRawParameterValue ("filterkey");
-    filterEnvParam  = parameters.getRawParameterValue (maermel::ids::filterEnv);
-    filterVelParam  = parameters.getRawParameterValue ("filtervel");
-    filterVelCutParam = parameters.getRawParameterValue ("filtervelcutoff");
+    volumeParam  = rawParameter ("volume");
+    velocityParam = rawParameter ("velocity");
+    wheelAmpParam = rawParameter ("wheelamp");
+    atWheelParam = rawParameter ("atwheel");
+    velOffsetParam = rawParameter ("veloffset");
+    ampKeyScaleParam = rawParameter ("ampkeyscale");
+    voiceModeParam = rawParameter ("voicemode");
+    glideParam = rawParameter (maermel::ids::glide);
+    startParam    = rawParameter ("start");
+    startVelParam = rawParameter ("startvel");
+    startRndParam = rawParameter ("startrnd");
+    coarseParam   = rawParameter ("coarse");
+    fineParam     = rawParameter ("fine");
+    keyShiftParam = rawParameter ("keyshift");
+    crushParam    = rawParameter (maermel::ids::lofi);
+    fxModeParam   = rawParameter ("fxmode");
+    pitchBendParam = rawParameter ("pitchbend");
+    filterTypeParam = rawParameter ("filtertype");
+    cutoffParam     = rawParameter (maermel::ids::cutoff);
+    resonanceParam  = rawParameter (maermel::ids::resonance);
+    driveParam      = rawParameter (maermel::ids::drive);
+    filterKeyParam  = rawParameter ("filterkey");
+    filterEnvParam  = rawParameter (maermel::ids::filterEnv);
+    filterVelParam  = rawParameter ("filtervel");
+    filterVelCutParam = rawParameter ("filtervelcutoff");
     for (auto* entry : { &polyLfoParams, &monoLfoParams })
     {
         const juce::String prefix = (entry == &polyLfoParams) ? "plfo" : "mlfo";
-        entry->rate   = parameters.getRawParameterValue (prefix + "rate");
-        entry->sync   = parameters.getRawParameterValue (prefix + "sync");
-        entry->env    = parameters.getRawParameterValue (prefix + "env");
-        entry->wave   = parameters.getRawParameterValue (prefix + "wave");
-        entry->invert = parameters.getRawParameterValue (prefix + "invert");
-        entry->delay  = parameters.getRawParameterValue (prefix + "delay");
+        entry->rate   = rawParameter (prefix + "rate");
+        entry->sync   = rawParameter (prefix + "sync");
+        entry->env    = rawParameter (prefix + "env");
+        entry->wave   = rawParameter (prefix + "wave");
+        entry->invert = rawParameter (prefix + "invert");
+        entry->delay  = rawParameter (prefix + "delay");
     }
-    lfoPitchParam    = parameters.getRawParameterValue ("lfopitch");
-    lfoFilterParam   = parameters.getRawParameterValue ("lfofilter");
-    lfoVolumeParam   = parameters.getRawParameterValue ("lfovolume");
-    lfoPanParam      = parameters.getRawParameterValue ("lfopan");
-    wheelPitchParam  = parameters.getRawParameterValue ("wheelpitch");
-    wheelFilterParam = parameters.getRawParameterValue ("wheelfilter");
+    lfoPitchParam    = rawParameter ("lfopitch");
+    lfoFilterParam   = rawParameter ("lfofilter");
+    lfoVolumeParam   = rawParameter ("lfovolume");
+    lfoPanParam      = rawParameter ("lfopan");
+    wheelPitchParam  = rawParameter ("wheelpitch");
+    wheelFilterParam = rawParameter ("wheelfilter");
 
     syncSwitchSettings();
     startTimerHz (20);               // 50 ms: MIDI-Umschaltung, Aufräumen, Einstellungen
     loader.startThread();
 }
 
+std::atomic<float>* MaermelAudioProcessor::rawParameter (const juce::String& id)
+{
+    auto* value = parameters.getRawParameterValue (id);
+    // Tippfehler in der ID: im Debug-Build sofort hier anhalten, statt später im Audio-Thread abzustürzen (seit 1.0.3)
+    jassert (value != nullptr);
+    return value;
+}
+
 MaermelAudioProcessor::~MaermelAudioProcessor()
 {
+    // BEKANNTE SCHWACHSTELLE (gesehen in der Prüfung zu 1.0.3, Behebung geplant – Konzept, To-Do „Abbruch-Flag
+    // für Lader und Export“):
+    // stopThread wartet höchstens die angegebene Zeit und beendet den Thread danach GEWALTSAM. Das ist undefiniertes
+    // Verhalten und kann den Host abstürzen lassen. Normalerweise kommt es nicht so weit, aber:
+    //  - Der Lader fragt threadShouldExit() während des eigentlichen Ladens (loadAnyInstrument, Samples einlesen)
+    //    nicht ab. Wird das Projekt geschlossen, während ein großes Instrument von einer langsamen Platte oder
+    //    einem Netzlaufwerk lädt, können die 5 s überschritten werden.
+    //  - Der Export prüft threadShouldExit() nur zwischen zwei Samples; copyFileTo einer sehr großen Datei lässt
+    //    sich nicht unterbrechen.
+    // Geplante Lösung: ein Abbruch-Flag bis in loadAnyInstrument bzw. MemoryGuard durchreichen und zwischen den
+    // Samples prüfen; beim Export große Dateien in Blöcken kopieren und dazwischen prüfen.
     if (exportJob != nullptr)
-        exportJob->stopThread (10000);   // laufenden Export sauber beenden (prüft threadShouldExit)
+        exportJob->stopThread (10000);   // laufenden Export beenden (prüft threadShouldExit zwischen den Samples)
     loader.stopThread (5000);
     stopTimer();
     cancelPendingUpdate();               // keine Übergabe mehr nach dem Abbau (handleAsyncUpdate)
@@ -493,7 +592,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
                                                  .withValueFromStringFunction (parsePercentZero)));
     }
 
-    // Vol: −60 dB (= stumm) bis +6 dB, 0 dB etwa in der Mitte des Regelwegs
+    // Vol: −60 dB (= stumm) bis +6 dB, −12 dB in der Mitte des Regelwegs (0 dB bei etwa 80 %)
     juce::NormalisableRange<float> volumeRange (kVolumeMinDb, 6.0f);
     volumeRange.setSkewForCentre (-12.0f);
     add (std::make_unique<juce::AudioParameterFloat> (
@@ -517,7 +616,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
             {
                 const float dbPerOctave = v * 3.0f;
                 if (std::abs (dbPerOctave) < 0.05f) return juce::String ("0");
-                return (dbPerOctave > 0 ? "+" : "") + juce::String (dbPerOctave, 1) + " dB/Okt";
+                return (dbPerOctave > 0 ? "+" : "") + juce::String (dbPerOctave, 1) + " dB/Oct";
             })
             .withValueFromStringFunction ([] (const juce::String& t)
             {
@@ -573,10 +672,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (crushText)
             .withValueFromStringFunction ([] (const juce::String& t)
             {
-                // Chorus-Modus oder Eingabe mit „%“: Prozent; sonst wie bisher Bit (Lo-Fi-Kennlinie)
-                if (displayChorusMode.load() || t.containsChar ('%'))
-                    return maermel::parse::plainNumber (plain (t), 0, 100, 0);
-                return maermel::parse::crushAmount (plain (t), 0.0f);
+                return MaermelAudioProcessor::lofiValueFromText (t, displayChorusMode.load());
             })));
     // Umschalter Lo-Fi / Chorus (seit 26.10.2026): bewusst nicht automatisierbar; gespeichert mit Preset und Projekt
     add (std::make_unique<juce::AudioParameterChoice> (
@@ -636,7 +732,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaermelAudioProcessor::creat
         // Rate: frei 0,05 ... 30 Hz; bei Sync wählt derselbe Regler einen Notenwert (Anzeige im Editor)
         add (std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { id + "rate", 1 }, name + "Rate", juce::NormalisableRange<float> (0.0f, 1.0f),
-            std::log (4.8f / 0.05f) / std::log (600.0f),   // Standard: 4,8 Hz (Kennlinie 0,05 Hz × 600^Stellung)
+            kLfoDefaultKnob,   // Standard: 4,8 Hz (Kennlinie 0,05 Hz × 600^Stellung)
             juce::AudioParameterFloatAttributes().withStringFromValueFunction (lfoFreeText)
                 .withValueFromStringFunction (lfoRateFromText)));
         add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id + "sync", 1 }, name + "Sync", false));
@@ -802,15 +898,18 @@ void MaermelAudioProcessor::updateLfoSettings() noexcept
             return cache.params;
         }
 
+        // Durchgehend die Werte aus raw (nicht erneut load()), damit Zwischenspeicher und Ergebnis garantiert
+        // zusammenpassen, auch wenn sich ein Parameter genau jetzt ändert (seit 1.0.3)
+        const float rate = raw[0];
         maermel::LfoParams lp;
-        const bool sync = p.sync->load() > 0.5f;
-        quarters = sync ? lfoNoteValue (p.rate->load()).quarters : 0.0;
-        lp.rateHz = sync ? (float) (bpm / 60.0 / quarters) : lfoFreeHz (p.rate->load());
-        lp.envMode = p.env->load() > 0.5f;
-        lp.wave = (maermel::LfoWave) juce::jlimit (0, 3, juce::roundToInt (p.wave->load()));
-        lp.invert = p.invert->load() > 0.5f;
-        lp.delaySeconds = maermel::Envelope::timeFromKnob (p.delay->load());
-        lp.dc = lfoIsDc (p.rate->load());
+        const bool sync = raw[1] > 0.5f;
+        quarters = sync ? lfoNoteValue (rate).quarters : 0.0;
+        lp.rateHz = sync ? (float) (bpm / 60.0 / quarters) : lfoFreeHz (rate);
+        lp.envMode = raw[2] > 0.5f;
+        lp.wave = (maermel::LfoWave) juce::jlimit (0, 3, juce::roundToInt (raw[3]));
+        lp.invert = raw[4] > 0.5f;
+        lp.delaySeconds = maermel::Envelope::timeFromKnob (raw[5]);
+        lp.dc = lfoIsDc (rate);
         cache = { true, raw, bpm, quarters, lp };
         return lp;
     };
@@ -926,6 +1025,10 @@ void MaermelAudioProcessor::syncSwitchSettings()
         if (slot.cc.load() != cc[(size_t) i] || slot.target.load() != target[(size_t) i]
             || slot.jump.load() != jump || slot.active.load() != active[(size_t) i])
         {
+            // Die Werte sind einzeln atomar, aber nicht gemeinsam. Damit der Audio-Thread keine Mischung aus alter
+            // und neuer Zuordnung sieht (z. B. neuer Parameter mit altem Controller), die Zeile zuerst abschalten
+            // und erst zum Schluss wieder freigeben (seit 1.0.3).
+            slot.active = false;
             slot.param = active[(size_t) i] ? parameters.getParameter (pc::kTargets[target[(size_t) i]].paramId) : nullptr;
             slot.cc = cc[(size_t) i];
             slot.target = target[(size_t) i];
@@ -990,7 +1093,10 @@ bool MaermelAudioProcessor::handleParameterControllers (const juce::MidiMessage&
         }
         slot.lastIncoming = wanted;
 
-        // JUMP bzw. abgeholt: Wert setzen (die Parameterglättung verhindert Knacken)
+        // JUMP bzw. abgeholt: Wert setzen (die Parameterglättung verhindert Knacken).
+        // Bewusst ohne begin/endChangeGesture: Die Gesten gehören auf den Message-Thread. Folge: Im Touch- oder
+        // Latch-Modus zeichnen manche DAWs die Bewegung evtl. nicht zuverlässig auf. Erst ändern, wenn ein Test mit
+        // Automationsaufnahme Probleme zeigt (Konzept, To-Do „Controller → Parameter über den Timer“).
         if (std::abs (wanted - current) > 1.0e-6f)
             param->setValueNotifyingHost (wanted);
         slot.lastSet = wanted;
@@ -1142,6 +1248,8 @@ void MaermelAudioProcessor::handleMidi (const juce::MidiMessage& m) noexcept
     }
     else if (m.isAllNotesOff() || m.isAllSoundOff())
         synth.allNotesOff();
+    else if (m.isResetAllControllers())
+        synth.resetControllers();   // CC121 (seit 1.0.3), z. B. von Cubase beim Stoppen
 }
 
 void MaermelAudioProcessor::renderRange (juce::AudioBuffer<float>& buffer, int start, int end) noexcept
@@ -1182,9 +1290,8 @@ void MaermelAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     takePendingInstrument();
     if (allNotesOffRequested.exchange (false))
     {
-        // Wie MIDI „All Notes Off“: Stimmen gehen in die Release-Phase, Pedal aus (auch der CC-64-Wert für
-        // locc64/hicc64), Aftertouch zurück. Das Modulationsrad bleibt, wo es steht.
-        synth.controller (64, 0);
+        // Wie MIDI „All Notes Off“: Stimmen gehen in die Release-Phase, Pedal aus (allNotesOff setzt seit 1.0.3
+        // auch den CC-64-Wert für locc64/hicc64 selbst zurück), Aftertouch zurück. Das Modulationsrad bleibt.
         synth.allNotesOff();
         aftertouchActive = false;
     }
@@ -1210,6 +1317,10 @@ void MaermelAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         const int eventPos = juce::jlimit (0, total, meta.samplePosition);
         renderRange (buffer, position, eventPos);
         position = eventPos;
+        // SysEx und andere lange Nachrichten (mehr als 3 Byte) braucht Märmel nicht. getMessage() würde für sie
+        // Speicher anfordern – im Audio-Thread zu vermeiden (seit 1.0.3).
+        if (meta.numBytes > 3)
+            continue;
         handleMidi (meta.getMessage());
     }
     renderRange (buffer, position, total);
@@ -1401,6 +1512,18 @@ void MaermelAudioProcessor::checkLiveEdit()
 
 void MaermelAudioProcessor::applyParameterValues (const juce::XmlElement* preset)
 {
+    // Eintrag eines Parameters im Preset. SFZP-Dateien nennen die lesbaren Namen ("cutoff"); die kurze interne ID
+    // wird ebenfalls angenommen. nullptr = Parameter fehlt im Preset.
+    auto findEntry = [preset] (const juce::String& id) -> const juce::XmlElement*
+    {
+        if (preset == nullptr)
+            return nullptr;
+        auto* entry = preset->getChildByAttribute ("id", juce::String (maermel::ids::presetName (id.toRawUTF8())));
+        return entry != nullptr ? entry : preset->getChildByAttribute ("id", id);
+    };
+    // Presets und kopierte Einstellungen bis 1.0.2 (Version 1, auch ohne Angabe): LFO-Sync-Notenwerte umrechnen
+    const bool version1 = preset != nullptr && preset->getIntAttribute ("version", 1) < 2;
+
     for (auto* parameter : getParameters())
     {
         auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
@@ -1409,15 +1532,17 @@ void MaermelAudioProcessor::applyParameterValues (const juce::XmlElement* preset
 
         // Gespeichert sind tatsächliche Werte; fehlt ein Parameter im Preset, gilt sein Standardwert
         float value = ranged->convertFrom0to1 (ranged->getDefaultValue());
-        if (preset != nullptr)
+        const juce::String id = ranged->getParameterID();
+        if (auto* entry = findEntry (id))
+            if (entry->hasAttribute ("value"))
+                value = storedParameterValue (*ranged, entry->getStringAttribute ("value"));   // geprüft, s. o.
+
+        // Umrechnung Version 1 → 2 (siehe kSettingsVersion): nur die Rate eines LFOs, dessen Sync im Preset an ist
+        if (version1 && (id == "plforate" || id == "mlforate"))
         {
-            // SFZP-Dateien nennen die lesbaren Namen ("cutoff"); die kurze interne ID wird ebenfalls angenommen
-            const juce::String id = ranged->getParameterID();
-            auto* entry = preset->getChildByAttribute ("id", juce::String (maermel::ids::presetName (id.toRawUTF8())));
-            if (entry == nullptr)
-                entry = preset->getChildByAttribute ("id", id);
-            if (entry != nullptr)
-                value = (float) entry->getDoubleAttribute ("value", value);
+            auto* sync = findEntry (id.dropLastCharacters (4) + "sync");   // "plforate" → "plfosync"
+            if (sync != nullptr && sync->getDoubleAttribute ("value", 0.0) > 0.5)
+                value = syncRateFromVersion1 (value);
         }
 
         ranged->setValueNotifyingHost (ranged->convertTo0to1 (value));
@@ -1427,7 +1552,7 @@ void MaermelAudioProcessor::applyParameterValues (const juce::XmlElement* preset
 std::unique_ptr<juce::XmlElement> MaermelAudioProcessor::createSettingsXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> (kPresetTag);
-    xml->setAttribute ("version", 1);
+    xml->setAttribute ("version", kSettingsVersion);
 
     for (auto* parameter : getParameters())
     {
@@ -1532,7 +1657,25 @@ public:
         : juce::Thread ("Maermel Export"), owner (p), source (std::move (src)), target (std::move (dst)),
           presetXml (std::move (preset)) {}
 
+    // Sicherheitsnetz (seit 1.0.3, wie beim Laden in loadInstrumentNow): Eine Ausnahme im Export-Thread (z. B. kein
+    // Speicher mehr) würde sonst den ganzen Host beenden. So scheitert nur dieser Export, mit Meldung.
     void run() override
+    {
+        try
+        {
+            runExport();
+        }
+        catch (const std::bad_alloc&)
+        {
+            finish (false, "Export failed: not enough memory");
+        }
+        catch (const std::exception& e)
+        {
+            finish (false, "Export failed: " + juce::String::fromUTF8 (e.what()));
+        }
+    }
+
+    void runExport()
     {
         auto utf8 = [] (const std::string& t) { return juce::String::fromUTF8 (t.c_str(), (int) t.size()); };
 
@@ -1598,6 +1741,8 @@ public:
                 const juce::File to = folder.getChildFile (name);
                 if (! to.exists())
                 {
+                    // Nicht unterbrechbar (siehe Destruktor, „bekannte Schwachstelle“): große Dateien später in
+                    // Blöcken kopieren und dazwischen threadShouldExit() prüfen.
                     if (! from.copyFileTo (to))
                     {
                         finish (false, "Could not copy: " + name);
@@ -1714,9 +1859,11 @@ bool MaermelAudioProcessor::isSettingsText (const juce::String& text)
 
 bool MaermelAudioProcessor::pasteSettingsFromText (const juce::String& text)
 {
-    if (! isSettingsText (text))
+    if (! text.trimStart().startsWith ("<"))
         return false;
-    auto xml = juce::XmlDocument::parse (text);
+    auto xml = juce::XmlDocument::parse (text);   // nur einmal lesen (bis 1.0.2 zweimal über isSettingsText)
+    if (! isPresetElement (xml.get()))
+        return false;
     applyParameterValues (xml.get());
     return true;
 }
@@ -1778,12 +1925,35 @@ void MaermelAudioProcessor::loadInstrumentFile (const juce::File& requestedFile,
         currentFile = file;                       // sofort, damit Pfeiltasten vom neuen Stand aus weiterzählen
         instrumentName = file.getFileNameWithoutExtension();
         presetNote = note;                        // wird vom Loader-Thread gelesen, daher unter infoLock
-        instrumentInfo = "Loading ...";   // JUCE-Strings mit Umlauten immer über fromUTF8
+        instrumentInfo = "Loading ...";
     }
     ++instrumentVersion;
     notifyHostAboutName();
     liveReloadPending = false;   // ein bewusst gewähltes Instrument ist nie ein Live-Edit-Neuladen
     loader.request (file);
+}
+
+void MaermelAudioProcessor::unloadInstrument()
+{
+    // Instrument entladen (seit 1.0.3), z. B. wenn ein DAW-Projekt in eine laufende Instanz geladen wird und sein
+    // Instrument hier nicht gefunden wird: Stille statt des bisherigen Instruments. So stimmen Klang, Anzeige und
+    // das, was beim nächsten Speichern ins Projekt geschrieben wird, überein – wie bei einem frisch geöffneten Projekt.
+    // Läuft gerade noch ein Ladevorgang, wird er durch diese neue Anforderung verworfen (hasNewerRequest).
+    bool wasLoaded = false;
+    {
+        const juce::ScopedLock sl (infoLock);
+        wasLoaded = (currentFile != juce::File());
+        currentFile = juce::File();
+        instrumentName = "No Instrument";   // wie in einem frischen Projekt (bis 25.11.2026 leer – Display ohne Text)
+        presetNote.clear();
+        currentAlert.clear();               // die Warnung des alten Instruments gilt nicht mehr
+    }
+    if (! wasLoaded)
+        return;   // nichts geladen (frisches Projekt): wie bisher nichts tun
+    ++instrumentVersion;
+    notifyHostAboutName();
+    liveReloadPending = false;
+    loader.request (juce::File());   // leere Datei = entladen (loadInstrumentNow)
 }
 
 void MaermelAudioProcessor::notifyHostAboutName()
@@ -1803,6 +1973,19 @@ juce::File MaermelAudioProcessor::getInstrumentFile() const
 
 void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
 {
+    // Leere Datei: Instrument entladen (unloadInstrument, seit 1.0.3). Ein leeres Instrument übergeben – der
+    // Audio-Thread blendet das bisherige aus, der Timer gibt es frei. Keine Meldungen; die Hinweise zum nicht
+    // gefundenen Instrument (Loading notes) bleiben stehen.
+    if (file == juce::File())
+    {
+        currentMissingSamples = 0;
+        lastInstrument.reset();
+        lastInstrumentBytes = 0;
+        handOverInstrument (std::make_shared<const maermel::Instrument>());
+        ++instrumentVersion;
+        return;
+    }
+
     const std::string path = file.getFullPathName().replaceCharacter ('\\', '/').toStdString();
 
     // Speicherschutz: Die Samples eines Instruments dürfen höchstens die Hälfte des Arbeitsspeichers belegen
@@ -1821,6 +2004,7 @@ void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
     std::unique_ptr<maermel::Instrument> loaded;
     try
     {
+        // Nicht abbrechbar (siehe Destruktor, „bekannte Schwachstelle“): Abbruch-Flag ist für eine spätere Version geplant
         loaded = maermel::loadAnyInstrument (path, guard);   // .sfz oder .exs
     }
     catch (const std::bad_alloc&)
@@ -1872,14 +2056,12 @@ void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
     currentMissingSamples = instrument->missingSamples;   // Export nur, wenn alle Samples gefunden wurden
 
     if (instrument->notEnoughMemory)
-        ++memoryAlert;
+        ++memoryAlert;                                    // rote Meldung; abgelehntes Instrument ist stumm
     if (instrument->fileMissing)
     {
         missingFileExs = file.hasFileExtension ("exs");
         ++missingFileAlert;                               // rote Meldung „NO SFZ !!“ bzw. „NO EXS !!“
-    }                                    // rote Meldung; abgelehntes Instrument ist stumm
-    lastInstrument = instrument;
-    lastInstrumentBytes = instrument->sampleMemoryBytes;
+    }
 
     // Fehlende Samples: rote Meldung im Display (Einzelheiten im Logfile)
     if (instrument->missingSamples > 0)
@@ -1897,8 +2079,18 @@ void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
             for (const auto& w : instrument->warnings)
                 notes << "\n" << fromEngine (w);
         }
+        // Rote Warnung dieses Ladevorgangs (leer = keine). Gleiche Reihenfolge wie im Editor: Kommen mehrere Gründe
+        // zusammen, zeigt er die letzte – hier gewinnt deshalb ebenfalls die letzte Zuweisung.
+        juce::String alert;
+        if (instrument->missingSamples > 0)
+            alert = (instrument->sampleCount == 0) ? "NO SAMPLES !!" : "MISSING SAMPLES !!";
+        if (instrument->fileMissing)
+            alert = file.hasFileExtension ("exs") ? "NO EXS !!" : "NO SFZ !!";
+        if (instrument->notEnoughMemory)
+            alert = "NOT ENOUGH MEMORY !!";
         {
             const juce::ScopedLock sl (infoLock);
+            currentAlert = alert;
             loadingNotes = notes;
             loadingNotesInstrument = file.getFileNameWithoutExtension();
             currentFingerprint = fingerprint;
@@ -1934,6 +2126,12 @@ void MaermelAudioProcessor::loadInstrumentNow (const juce::File& file)
             info << "\n" << presetNote;
         instrumentInfo = info;
     }
+
+    // Speicherschutz: Ab hier wird dieses Instrument übergeben – erst jetzt merken (seit 1.0.3). Bis 1.0.2 geschah
+    // das weiter oben, auch für ein beim Live-Edit verworfenes Instrument; der Speicherschutz rechnete beim nächsten
+    // Laden dann mit diesem (bereits freigegebenen) statt mit dem tatsächlich spielenden.
+    lastInstrument = instrument;
+    lastInstrumentBytes = instrument->sampleMemoryBytes;
 
     // Warten Einstellungen auf genau dieses Instrument (Instrumentwechsel mit Preset/Standardwerten), übergibt es
     // der Message-Thread zusammen mit ihnen (loadFinished → handleAsyncUpdate). Sonst sofort wie bisher.
@@ -2070,6 +2268,7 @@ void MaermelAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         }
         state.setProperty ("fix", fixActive.load(), nullptr);
     }
+    state.setProperty ("stateVersion", kSettingsVersion, nullptr);   // seit 1.0.3, siehe kSettingsVersion
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -2080,12 +2279,37 @@ void MaermelAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
         return;
 
+    // Noch wartende Einstellungen eines vorherigen Instrumentwechsels verfallen: Ab jetzt gilt das Projekt. Sonst
+    // könnten sie nach dem Laden die gerade gesetzten Projektwerte überschreiben (seit 1.0.3).
+    cancelDeferredSettings();
+
     auto state = juce::ValueTree::fromXml (*xml);
     // Projekte von vor dem 12.10.2026: lesbare IDs ("cutoff" …) auf die kurzen internen umsetzen (ParameterIds.h)
     for (auto child : state)
         if (child.hasProperty ("id"))
             child.setProperty ("id", juce::String (maermel::ids::idFromPresetName (child.getProperty ("id").toString().toRawUTF8())),
                                nullptr);
+
+    // Gespeicherte Werte prüfen, bevor JUCE sie übernimmt (seit 1.0.3, siehe storedParameterValue): NaN, unlesbarer
+    // Text und Werte außerhalb des Bereichs werden zum Standardwert bzw. auf den Bereich begrenzt
+    for (auto child : state)
+        if (child.hasProperty ("id") && child.hasProperty ("value"))
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameters.getParameter (child.getProperty ("id").toString())))
+                child.setProperty ("value", storedParameterValue (*ranged, child.getProperty ("value").toString()), nullptr);
+
+    // Projekte bis 1.0.2 (ohne "stateVersion"): LFO-Sync-Notenwerte umrechnen (siehe kSettingsVersion)
+    if ((int) state.getProperty ("stateVersion", 1) < 2)
+    {
+        for (const char* prefix : { "plfo", "mlfo" })
+        {
+            const juce::String id (prefix);
+            auto rate = state.getChildWithProperty ("id", id + "rate");
+            auto sync = state.getChildWithProperty ("id", id + "sync");
+            if (rate.isValid() && sync.isValid() && (float) sync.getProperty ("value", 0.0f) > 0.5f)
+                rate.setProperty ("value", syncRateFromVersion1 ((float) rate.getProperty ("value", kLfoDefaultKnob)), nullptr);
+        }
+    }
+
     const juce::String path = state.getProperty ("sfzPath").toString();
     // LOCK-Schalter. Die Eigenschaft heißt aus Kompatibilität weiter "fix" (so hieß der Knopf bis Oktober 2026),
     // damit ältere Projekte ihren Zustand behalten. Bitte nicht umbenennen.
@@ -2133,6 +2357,9 @@ void MaermelAudioProcessor::setStateInformation (const void* data, int sizeInByt
             if (relPath.isNotEmpty())
                 notes << "\nPath in the library: " << relPath;
             notes << "\n\n" << report;
+            // Spielte in dieser Instanz noch ein anderes Instrument (Projekt in laufende Instanz geladen), wird es
+            // entladen – Stille statt des alten Klangs, und beim Speichern bleibt der gesuchte Pfad erhalten (1.0.3)
+            unloadInstrument();
             {
                 const juce::ScopedLock sl (infoLock);
                 unresolvedPath = path;                   // beim Speichern des Projekts unverändert zurückschreiben
@@ -2141,11 +2368,22 @@ void MaermelAudioProcessor::setStateInformation (const void* data, int sizeInByt
                 loadingNotes = notes;
                 loadingNotesInstrument = name;
                 instrumentInfo = "Instrument not found: " + name;
+                currentAlert = "INSTRUMENT NOT FOUND !!";
             }
             ErrorLog::write (library->getSettings(), logErrorsActive.load(), logHeader(), name, notes);
             ++missingInstrumentAlert;                    // rote Meldung „INSTRUMENT NOT FOUND !!“
             ++instrumentVersion;
         }
+    }
+    else
+    {
+        // Projekt ohne Instrument (gespeichert, als keins geladen war): ebenfalls kein Instrument (seit 1.0.3).
+        // Bis 1.0.2 spielte ein zuvor geladenes einfach weiter und wurde beim nächsten Speichern mitgeschrieben.
+        unloadInstrument();
+        const juce::ScopedLock sl (infoLock);
+        unresolvedPath.clear();
+        unresolvedRelPath.clear();
+        unresolvedFingerprint.clear();
     }
 }
 
@@ -2217,8 +2455,11 @@ juce::File MaermelAudioProcessor::locateInstrument (const juce::String& savedPat
     const std::string wanted = key (fileName);
     const juce::String extension = fileName.fromLastOccurrenceOf (".", true, false);
     std::vector<juce::File> candidates;
-    for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*" + extension, juce::File::findFiles))
-        if (key (entry.getFile().getFileName()) == wanted)
+    // Alle Dateien durchgehen und die Endung selbst prüfen: Der Platzhalter "*.sfz" des Iterators unterscheidet
+    // auf Linux Groß/klein, „Piano.SFZ“ würde sonst nicht gefunden (seit 1.0.3). Gelesen wird dadurch nicht mehr –
+    // der Iterator listet den Ordner ohnehin vollständig und filtert erst danach.
+    for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*", juce::File::findFiles))
+        if (entry.getFile().hasFileExtension (extension) && key (entry.getFile().getFileName()) == wanted)
             candidates.push_back (entry.getFile());
 
     std::vector<std::string> parents;
@@ -2265,6 +2506,35 @@ juce::String MaermelAudioProcessor::lfoRateText (float knob, bool sync)
     if (lfoIsDc (knob))
         return "DC";
     return sync ? juce::String (lfoNoteValue (knob).name) : lfoFreeText (knob, 0);
+}
+
+// Text des Reglers LO-FI/CHORUS: im Chorus-Modus Prozent, sonst Bittiefe und Samplerate, z. B. "11.7 bit/12.6 kHz".
+// Die Oberfläche übergibt Modus und Samplerate ihrer eigenen Instanz, die DAW-Anzeige (crushText) die globalen Werte.
+juce::String MaermelAudioProcessor::lofiText (float v, bool chorus, double sampleRate)
+{
+    if (v <= 0.0f)
+        return "off";
+    if (chorus)
+        return juce::String (juce::roundToInt (v)) + " %";
+    if (sampleRate <= 0.0)
+        sampleRate = 44100.0;   // vor prepareToPlay noch unbekannt
+    const float bits = maermel::Synth::crushBits (v);
+    const int stage = maermel::Synth::crushHoldStage (bits, sampleRate);
+    juce::String text = juce::String (bits, 1) + " bit";
+    if (stage > 0)
+    {
+        const float khz = (float) (sampleRate * 2.0 / stage / 1000.0);
+        text << "/" << (khz < 20.0f ? juce::String (khz, 1) : juce::String (juce::roundToInt (khz))) << " kHz";   // kompakt fürs Display
+    }
+    return text;
+}
+
+// Eingetippter Wert für LO-FI/CHORUS: im Chorus-Modus oder mit „%“ Prozent, sonst Bit (Lo-Fi-Kennlinie)
+float MaermelAudioProcessor::lofiValueFromText (const juce::String& text, bool chorus)
+{
+    if (chorus || text.containsChar ('%'))
+        return maermel::parse::plainNumber (plain (text), 0, 100, 0);
+    return maermel::parse::crushAmount (plain (text), 0.0f);
 }
 
 juce::AudioProcessorEditor* MaermelAudioProcessor::createEditor()
