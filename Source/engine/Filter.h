@@ -9,7 +9,7 @@
 //
 // Bauweise: "Zero-Delay-Feedback" (TPT, nach V. Zavalishin, "The Art of VA Filter Design").
 // Bleibt auch bei schneller Modulation stabil und klickfrei. Eine weiche Sättigung am
-// Eingang der Rückkopplung gibt den analogen Charakter und begrenzt die Selbstoszillation.
+// Eingang der Rückkopplung gibt den analogen Charakter und begrenzt die Resonanz.
 //
 // Filtertypen als Mischung der Stufenausgänge, dadurch klingen
 // alle Typen nach demselben Filter. Beim Umschalten wird in 5 ms übergeblendet.
@@ -290,6 +290,11 @@ struct Drive
 // jeder zweite Koeffizient ist 0, daher nur 10 Koeffizientenpaare je Richtung.
 // Gesamtverzögerung genau kDelay Samples. Ist Drive aus, wird das Signal nur um dieselbe Zeit verzögert –
 // so knackt es nicht, wenn Drive während einer Note auf- oder zugedreht wird. Kosten bei Drive aus: praktisch null.
+//
+// Ringpuffer-Zugriffe (seit 1.0.3): Alle Indizes werden als (p + kSize − Abstand) & kMask gerechnet. So ist der Wert
+// vor dem Maskieren nie negativ – "& kMask" auf negativen int-Werten setzt das Zweierkomplement voraus, das C++17 noch
+// nicht garantiert (erst C++20). Funktioniert hat es überall, so ist es aber auch formal sauber und kostet nichts;
+// das Ergebnis ist bitgleich.
 class DriveStage
 {
 public:
@@ -312,7 +317,7 @@ public:
         if (g <= 1.0f)
         {
             active = false;
-            return x[(pos - kDelay) & kMask];          // Drive aus: nur gleich verzögern
+            return x[(pos + kSize - kDelay) & kMask];   // Drive aus: nur gleich verzögern
         }
         if (! active)
         {
@@ -321,19 +326,25 @@ public:
         }
 
         // Hochtasten: zwei Werte je Eingangssample (gerade = Original, ungerade = Halbbandinterpolation)
-        even[pos] = Drive::process (x[(pos - 10) & kMask], g, makeupGain);
+        even[pos] = Drive::process (x[(pos + kSize - 10) & kMask], g, makeupGain);
         odd[pos]  = Drive::process (interpolate (pos), g, makeupGain);
 
         // Runtertasten (Halbband auf den verzerrten Werten, nur jeden zweiten Ausgang berechnen)
-        float z = 0.5f * even[(pos - 9) & kMask];
+        float z = 0.5f * even[(pos + kSize - 9) & kMask];
         for (int k = 0; k < kPairs; ++k)
-            z += kCoeffs[k] * (odd[(pos - 10 - k) & kMask] + odd[(pos - 9 + k) & kMask]);
+            z += kCoeffs[k] * (odd[(pos + kSize - 10 - k) & kMask] + odd[(pos + kSize - 9 + k) & kMask]);
         return z;
     }
 
 private:
     static constexpr int kPairs = 10;
     static constexpr int kSize = 64, kMask = kSize - 1;
+
+    // Der weiteste Blick zurück ist 10 + (kPairs − 1) = 19 Samples (bzw. kDelay). Der Puffer muss größer sein,
+    // sonst würden sich alte und neue Werte überschneiden (seit 1.0.3 vom Compiler geprüft).
+    static_assert (10 + kPairs - 1 < kSize, "Ringpuffer zu klein fuer die Halbbandfilter");
+    static_assert (kDelay < kSize, "Ringpuffer zu klein fuer die Verzoegerung");
+    static_assert ((kSize & kMask) == 0, "kSize muss eine Zweierpotenz sein (wegen & kMask)");
     static constexpr float kCoeffs[kPairs] = {
         3.1670276539e-01f, -1.0041591320e-01f, 5.4444960931e-02f, -3.3293785157e-02f, 2.0909774399e-02f,
         -1.2933442895e-02f, 7.6598010009e-03f, -4.2182400787e-03f, 2.0744360849e-03f, -9.3035647952e-04f };
@@ -343,7 +354,7 @@ private:
     {
         float sum = 0.0f;
         for (int k = 0; k < kPairs; ++k)
-            sum += kCoeffs[k] * (x[(p - 10 - k) & kMask] + x[(p - 9 + k) & kMask]);
+            sum += kCoeffs[k] * (x[(p + kSize - 10 - k) & kMask] + x[(p + kSize - 9 + k) & kMask]);
         return 2.0f * sum;
     }
 
@@ -353,8 +364,8 @@ private:
     {
         for (int i = 0; i < 2 * kPairs; ++i)
         {
-            const int p = (pos - i) & kMask;
-            even[p] = x[(p - 10) & kMask];
+            const int p = (pos + kSize - i) & kMask;
+            even[p] = x[(p + kSize - 10) & kMask];
             odd[p] = interpolate (p);
         }
     }
