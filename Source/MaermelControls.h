@@ -24,13 +24,13 @@ namespace maermel::ui
 {
 
 // ---------------------------------------------------------------------------
-class InstrumentDisplay : public juce::Component, public juce::SettableTooltipClient
+class InstrumentDisplay : public juce::Component   // bewusst ohne Tooltips (siehe „look“ in PluginEditor.h)
 {
 public:
     // arrows = false: Pfeile ausblenden (während einer roten Warnung)
     void setText (const juce::String& newText, juce::Colour colour = colours::cyan, bool arrows = true);
-    const juce::String& getText() const noexcept { return text; }
-    bool isTruncated() const noexcept            { return truncated; }
+    // Passt der Text in voller Länge ins Display? (Gleiche Breite und Schrift wie beim Zeichnen; seit 1.0.3)
+    bool fits (const juce::String& candidate) const;
 
     std::function<void()> onPrev, onNext, onCentre;
 
@@ -42,7 +42,7 @@ private:
     juce::String text;
     juce::Colour textColour = colours::cyan;
     bool showArrows = true;
-    bool truncated = false;
+    int maxChars = 0;                        // Platz in Zeichen beim letzten Zeichnen (0 = noch nicht gezeichnet)
 };
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,6 @@ public:
     ~ValueBox() override;
 
     void paint (juce::Graphics&) override;
-    void resized() override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
     // Neu zeichnen nur, wenn sich der angezeigte Text geändert hat (für den regelmäßigen Timer des Editors).
@@ -105,7 +104,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-class VelMarker : public juce::Component, public juce::SettableTooltipClient, private juce::Slider::Listener
+class VelMarker : public juce::Component, private juce::Slider::Listener   // bewusst ohne Tooltips
 {
 public:
     // mainFader: A- bzw. D-Fader (gleiche Höhe wie diese Komponente); fraction: VelA/VelD (0 … 1, 1 = keine Wirkung)
@@ -119,7 +118,6 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
     std::function<void (float fraction)> onChange;
-    float getFraction() const noexcept { return fraction; }
 
 private:
     void sliderValueChanged (juce::Slider*) override { repaint(); }   // wandert mit dem Hauptgriff
@@ -130,6 +128,7 @@ private:
 
     juce::Slider& main;
     float fraction = 1.0f;
+    bool dragging = false;                   // linke Maustaste gedrückt (Change-Gesture läuft)
     juce::ParameterAttachment attachment;
 };
 
