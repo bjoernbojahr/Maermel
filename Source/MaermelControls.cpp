@@ -37,8 +37,23 @@ void InstrumentDisplay::paint (juce::Graphics& g)
         DotText::draw (g, juce::String::fromUTF8 ("◂"), 9.0f, top, juce::Justification::left);
         DotText::draw (g, juce::String::fromUTF8 ("▸"), r.getWidth() - 9.0f, top, juce::Justification::right);
     }
-    truncated = DotText::draw (g, text, r.getCentreX(), top, juce::Justification::centred,
-                               r.getWidth() - 2.0f * kArrowZone - 4.0f, textColour);
+    // Platz in Zeichen merken (hängt vom Bildschirm ab: Punktabstand 1,5 auf Retina, sonst 2) – für fits()
+    const float maxWidth = r.getWidth() - 2.0f * kArrowZone - 4.0f;
+    const float pitch = DotText::lineHeight (g) / 8.0f;
+    maxChars = (int) std::floor ((maxWidth + pitch) / (pitch * 6.0f));
+    DotText::draw (g, text, r.getCentreX(), top, juce::Justification::centred, maxWidth, textColour);
+}
+
+bool InstrumentDisplay::fits (const juce::String& candidate) const
+{
+    // Vor dem ersten Zeichnen ist der Bildschirm noch unbekannt: mit dem logischen Punktabstand rechnen
+    int chars = maxChars;
+    if (chars <= 0)
+    {
+        const float maxWidth = (float) getWidth() - 2.0f * kArrowZone - 4.0f;
+        chars = (int) std::floor ((maxWidth + DotText::kPitch) / (DotText::kPitch * 6.0f));
+    }
+    return candidate.length() <= chars;
 }
 
 void InstrumentDisplay::mouseDown (const juce::MouseEvent& e)
@@ -86,10 +101,10 @@ void ValueBox::paint (juce::Graphics& g)
                    r.getWidth() - 4.0f);
 }
 
-void ValueBox::resized() {}
-
-void ValueBox::mouseDoubleClick (const juce::MouseEvent&)
+void ValueBox::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+        return;   // Rechtsklick öffnet kein Eingabefeld (seit 1.0.3, wie beim Display)
     // Wert eintippen: kleines Eingabefeld über dem Wertefeld (im übergeordneten Fenster, damit es breiter sein darf)
     auto* parent = getParentComponent();
     if (parent == nullptr || editor != nullptr)
@@ -113,6 +128,12 @@ void ValueBox::finishEditing (bool apply)
 {
     if (editor == nullptr)
         return;
+    // Callbacks sofort trennen (seit 1.0.3): Beim späteren Entfernen verliert das Textfeld den Fokus, und
+    // onFocusLost riefe finishEditing ein zweites Mal auf – mit apply = true. Nach Escape wurde der getippte Wert
+    // so doch übernommen, nach Return zweimal gesetzt.
+    editor->onReturnKey = nullptr;
+    editor->onEscapeKey = nullptr;
+    editor->onFocusLost = nullptr;
     if (apply)
         slider.setValue (slider.getValueFromText (editor->getText()), juce::sendNotificationSync);
 
@@ -151,6 +172,8 @@ void LedChoice::paint (juce::Graphics& g)
 
 void LedChoice::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+        return;   // Rechtsklick verstellt nichts (seit 1.0.3, wie beim Display)
     for (size_t i = 0; i < items.size(); ++i)
     {
         const auto& it = items[i];
@@ -247,17 +270,34 @@ void VelMarker::setFromY (float y)
     if (onChange) onChange (f);
 }
 
+// Rechtsklick verstellt nichts (seit 1.0.3, wie beim Display). dragging merkt sich, ob mit der linken Taste
+// gezogen wird – nur dann gibt es eine Change-Gesture, die beim Loslassen beendet werden muss.
 void VelMarker::mouseDown (const juce::MouseEvent& e)
 {
+    dragging = ! e.mods.isPopupMenu();
+    if (! dragging)
+        return;
     attachment.beginGesture();
     setFromY (e.position.y);
 }
 
-void VelMarker::mouseDrag (const juce::MouseEvent& e)  { setFromY (e.position.y); }
-void VelMarker::mouseUp (const juce::MouseEvent&)      { attachment.endGesture(); }
-
-void VelMarker::mouseDoubleClick (const juce::MouseEvent&)
+void VelMarker::mouseDrag (const juce::MouseEvent& e)
 {
+    if (dragging)
+        setFromY (e.position.y);
+}
+
+void VelMarker::mouseUp (const juce::MouseEvent&)
+{
+    if (dragging)
+        attachment.endGesture();
+    dragging = false;
+}
+
+void VelMarker::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        return;
     attachment.setValueAsCompleteGesture (1.0f);   // 100 % = keine Velocity-Wirkung
     if (onChange) onChange (1.0f);
 }
