@@ -64,45 +64,52 @@ public:
     // Um 'seconds' weiterzählen und den aktuellen Wert (inklusive Delay-Einblendung) liefern
     float advance (const LfoParams& p, float seconds) noexcept
     {
-        if (p.dc)
-            return p.invert ? -1.0f : 1.0f;   // DC: fester Höchst- bzw. (Invert) Tiefstwert, die Phase ruht
+        // DC: fester Höchst- bzw. (Invert) Tiefstwert, die Phase ruht. Delay und Env Mode sind wirkungslos.
+        // Der Wert läuft seit dem 25.11.2026 durch dieselbe Glättung wie im LFO-Betrieb – vorher kehrte die
+        // Funktion ohne Glättung zurück, und beim Umschalten zwischen LFO und DC sprang der Ausgabewert hart
+        // (hörbar am Filter und an der Lautstärke). volumeReduction gleitet dabei auf 0 (volle Lautstärke).
+        const bool dc = p.dc;
+        const float value = dc ? (p.invert ? -1.0f : 1.0f) : currentValue (p);
+        const float fade = (! dc && p.delaySeconds > 0.0f)
+                             ? std::min (1.0f, delayElapsed / p.delaySeconds) : 1.0f;
 
-        // Env Mode wurde ausgeschaltet, nachdem sein Durchgang schon beendet war: wieder frei schwingen.
-        // Ohne diese Zeile blieb der LFO für immer am Ende des Durchgangs stehen (Phase 1, Rechteck = −1) –
-        // beim Mono-LFO auf Cutoff saß der Filter dann dauerhaft zu, auch nach einem Instrumentwechsel, weil der
-        // Mono-LFO außerhalb von Env Mode nie neu gestartet wird (Fehler gefunden von Björn, 30.10.2026).
-        if (finished && ! p.envMode)
+        if (! dc)
         {
-            finished = false;
-            phase -= std::floor (phase);   // Phase 1,0 → 0,0 (gleiche Stelle der Schwingung)
-        }
-
-        const float value = currentValue (p);
-        const float fade = (p.delaySeconds > 0.0f) ? std::min (1.0f, delayElapsed / p.delaySeconds) : 1.0f;
-
-        delayElapsed = std::min (delayElapsed + seconds, 1.0e6f);
-
-        if (! finished)
-        {
-            phase += (double) (p.rateHz * seconds);
-            if (phase >= 1.0)
+            // Env Mode wurde ausgeschaltet, nachdem sein Durchgang schon beendet war: wieder frei schwingen.
+            // Ohne diese Zeile blieb der LFO für immer am Ende des Durchgangs stehen (Phase 1, Rechteck = −1) –
+            // beim Mono-LFO auf Cutoff saß der Filter dann dauerhaft zu, auch nach einem Instrumentwechsel, weil der
+            // Mono-LFO außerhalb von Env Mode nie neu gestartet wird (Fehler gefunden von Björn, 30.10.2026).
+            if (finished && ! p.envMode)
             {
-                if (p.envMode)
+                finished = false;
+                phase -= std::floor (phase);   // Phase 1,0 → 0,0 (gleiche Stelle der Schwingung)
+            }
+
+            delayElapsed = std::min (delayElapsed + seconds, 1.0e6f);
+
+            if (! finished)
+            {
+                phase += (double) (p.rateHz * seconds);
+                if (phase >= 1.0)
                 {
-                    phase = 1.0;          // Env Mode: ein Durchgang, dann stehen bleiben
-                    finished = true;
-                }
-                else
-                {
-                    phase -= std::floor (phase);
+                    if (p.envMode)
+                    {
+                        phase = 1.0;          // Env Mode: ein Durchgang, dann stehen bleiben
+                        finished = true;
+                    }
+                    else
+                    {
+                        phase -= std::floor (phase);
+                    }
                 }
             }
         }
+
         // Sehr kurze Glättung (Zeitkonstante kSmoothingSeconds): Sägezahn und Rechteck springen sonst von einem
         // Block zum nächsten – am Filter und an der Lautstärke hörbar als Knacken. Die Flanke ist nach ≈ 3 × 2 ms
         // vollständig; der Sprung-Charakter bleibt erhalten. Dreieck und Sinus ändern sich dadurch praktisch nicht.
         const float target = value * fade;
-        const float volumeTarget = fade * (1.0f - envVolumeLevel (p, value));
+        const float volumeTarget = dc ? 0.0f : fade * (1.0f - envVolumeLevel (p, value));
         if (! smoothingPrimed)
         {
             smoothed = target;                 // nach dem Start ohne Gleiten beginnen
@@ -114,6 +121,13 @@ public:
             const float k = smoothingFactor (seconds);
             smoothed += (target - smoothed) * k;
             smoothedVolume += (volumeTarget - smoothedVolume) * k;
+            // DC: am Ende genau auf ±1 bzw. 0 einrasten. Die Glättung allein bleibt knapp davor stehen (z. B. bei
+            // 0,99999982), weil der Schritt kleiner als die Rechengenauigkeit von float wird – DC soll aber exakt
+            // der Höchst- bzw. Tiefstwert sein. Nur bei DC, damit der LFO-Betrieb bitgleich bleibt.
+            if (dc && std::fabs (target - smoothed) < 1.0e-6f)
+                smoothed = target;
+            if (dc && std::fabs (smoothedVolume) < 1.0e-6f)
+                smoothedVolume = 0.0f;
         }
         return smoothed;
     }
