@@ -109,12 +109,13 @@ Testprogramme und Testdaten liegen gemeinsam im Ordner `tests/`. Bauen und Aufru
 | --- | --- |
 | `stucktest.cpp` | Belastungstest gegen hängende Noten: tausende zufällige Folgen, am Ende muss alles verstummen |
 | `layertest.cpp` | Stimmenzahl zählt Noten: Layer werden nie halbiert, es weichen immer ganze Noten |
+| `eqspacetest.cpp` | Parser: Leerzeichen um `=` (`key =66`), Dateinamen mit Leerzeichen oder `=` bleiben ganz |
+| `envlfotest.cpp` | Decay 0 ohne Knacken (Mindest-Decay, ohne Attack gleich auf Sustain); LFO ↔ DC gleitet, DC endet genau bei ±1 |
+| `resettest.cpp` | CC121 „Reset All Controllers“: Noten, die nur das Pedal hält, verklingen; gehaltene Tasten klingen weiter |
 | `offbytest.cpp` | `group`/`off_by`, z. B. geschlossene Hi-Hat beendet die offene |
 | `texttest.cpp` | Rückübersetzung eingetippter Werte |
 | `headertest.cpp` | Grundton und Loop nur aus den Kopfdaten, verglichen mit dem vollständigen Laden |
 | `veltest.cpp` | Velocity-Kurven und -Offsets |
-| `lfotest.cpp` | LFO beim Ein- und Ausschalten von Env Mode (muss danach wieder frei schwingen) |
-| `exsmixtest.cpp` | EXS-Import: Werte von Gruppe und Zone richtig zusammengeführt (Bereiche, Volume, Pan) |
 | `locatortest.cpp` | Wiederfinden eines Instruments auf einem anderen Rechner |
 | `exporttest.cpp` | Exportiert ein Instrument ohne Plugin und vergleicht es mit dem Original |
 | `sfzrender.cpp` | Spielt ein Instrument nach einer Ereignisliste ab und schreibt eine WAV-Datei – zum Anhören der Engine ohne DAW |
