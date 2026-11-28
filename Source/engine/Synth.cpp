@@ -1021,14 +1021,36 @@ void Synth::setPitchBendRange (float semitones) noexcept
     bendFactor = std::pow (2.0, (double) (bendNormalized * bendRange) / 12.0);
 }
 
+// Alle Noten loslassen (MIDI CC123/CC120 und Menü „All Notes Off“).
+// Bewusst NICHT über sustainPedal (false): releaseVoice unten gibt ohnehin alle Stimmen frei, auch die nur vom
+// Pedal gehaltenen. sustainPedal (false) würde zusätzlich Release-Samples (trigger=release) starten – also neue
+// Klänge genau dann, wenn alles verstummen soll. (Anders bei CC121, resetControllers: Dort soll es wie ein normales
+// Loslassen des Pedals klingen.)
 void Synth::allNotesOff()
 {
     pedalDown = false;
+    ccValues[64] = 0;   // auch der gemerkte CC-64-Wert für locc64/hicc64 (seit 1.0.3; bis dahin nur im Menü-Weg)
     heldCount = 0;
     resetPressure();   // kein hängender Aftertouch (das Modulationsrad bleibt, wo es steht)
     for (auto& v : voices)
         if (v.active())
             releaseVoice (v);
+}
+
+// CC121 „Reset All Controllers“ nach der MIDI-Empfehlung RP-015: Spielhilfen zurück in die Ruhelage.
+// Zurückgesetzt: Pitch Bend (Mitte), Modulationsrad, Kanal- und Poly-Aftertouch, Pedale (Sustain, Portamento,
+// Sostenuto, Soft). Nicht zurückgesetzt (so verlangt es RP-015): Volume (CC7), Pan (CC10) und alle anderen
+// Controller. Gedrückte Tasten klingen weiter; Noten, die nur noch das Sustain-Pedal hält, gehen in den Release
+// – genau wie beim Loslassen des Pedals.
+void Synth::resetControllers()
+{
+    pitchBend (8192);
+    modWheel (0);
+    resetPressure();
+    for (int cc : { 1, 64, 65, 66, 67 })   // gemerkter Stand für loccN/hiccN
+        controller (cc, 0);
+    if (pedalDown)
+        sustainPedal (false);
 }
 
 // ===========================================================================
