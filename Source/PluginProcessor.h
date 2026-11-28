@@ -91,9 +91,9 @@ public:
     bool wereNoSamplesLoaded() const noexcept            { return noSamplesLoaded.load(); }
     // Zähler: Instrument zu groß für den Arbeitsspeicher, nicht geladen (rote Meldung im Display)
     int getMemoryAlert() const noexcept                  { return memoryAlert.load(); }
-    // Zähler: SFZ- bzw. EXS-Datei nicht gefunden (z. B. gelöscht, bevor die Liste neu aufgebaut war)
     // Rechtsklick-Menü „All Notes Off“: alle Noten loslassen, Sustain-Pedal aus (im nächsten Audio-Block)
     void requestAllNotesOff() noexcept                   { allNotesOffRequested = true; }
+    // Zähler: SFZ- bzw. EXS-Datei nicht gefunden (z. B. gelöscht, bevor die Liste neu aufgebaut war)
     int getMissingFileAlert() const noexcept             { return missingFileAlert.load(); }
     // Zähler: Instrument eines DAW-Projekts auf diesem Rechner nicht gefunden (rote Meldung, Einzelheiten in Loading notes)
     int getMissingInstrumentAlert() const noexcept       { return missingInstrumentAlert.load(); }
@@ -102,6 +102,11 @@ public:
 
     // Anzeige der LFO-Rate: Hz oder Notenwert (bei Sync)
     static juce::String lfoRateText (float knob, bool sync);
+
+    // Anzeige und Eingabe des Reglers LO-FI/CHORUS für einen bestimmten Modus und eine Samplerate (seit 1.0.3:
+    // die Oberfläche übergibt die Werte ihrer eigenen Instanz statt der globalen Anzeigewerte)
+    static juce::String lofiText (float value, bool chorus, double sampleRate);
+    static float lofiValueFromText (const juce::String& text, bool chorus);
 
     // Anzeige einer Hüllkurvenzeit zu einer Reglerstellung (z. B. für die Zeit bei Velocity 1)
     static juce::String envelopeTimeText (float knob);
@@ -174,6 +179,9 @@ public:
     // Ladehinweise des aktuellen Instruments vollständig (leer = keine Hinweise), für die Tafel „Loading notes“
     juce::String getLoadingNotes() const            { const juce::ScopedLock sl (infoLock); return loadingNotes; }
     juce::String getLoadingNotesInstrument() const  { const juce::ScopedLock sl (infoLock); return loadingNotesInstrument; }
+    // Rote Warnung zum aktuell geladenen Instrument (z. B. „NO SAMPLES !!“), leer = keine. Für das Öffnen des Fensters:
+    // Die Zähler (getMissingSamplesAlert usw.) sagen nur, DASS es irgendwann eine Warnung gab (seit 1.0.3).
+    juce::String getCurrentAlert() const            { const juce::ScopedLock sl (infoLock); return currentAlert; }
 
     // Suchtext für das Library-Menü dieser Instanz (nur Message-Thread)
     juce::String libraryFilter;
@@ -199,7 +207,9 @@ private:
         bool pending = false;
     };
 
-    void loadInstrumentNow (const juce::File& file);   // Loader-Thread
+    void loadInstrumentNow (const juce::File& file);   // Loader-Thread; leere Datei = entladen
+    void unloadInstrument();                           // Instrument entladen (Stille), über den Loader-Thread
+    std::atomic<float>* rawParameter (const juce::String& id);   // getRawParameterValue mit Prüfung (Debug)
     void notifyHostAboutName();                        // Message-Thread: DAW über neuen Namen informieren
     void applyParameterValues (const juce::XmlElement* preset);   // nullptr = Standardwerte
     bool convertCurrentExsToSfz (juce::String& message);          // Message-Thread
@@ -271,6 +281,7 @@ private:
 
     mutable juce::CriticalSection infoLock;
     juce::String loadingNotes, loadingNotesInstrument;   // geschützt durch infoLock
+    juce::String currentAlert;                           // Warnung zum aktuellen Instrument, geschützt durch infoLock
     juce::String exportMessage;                          // geschützt durch infoLock
     std::atomic<int> currentMissingSamples { 0 };        // fehlende Samples des aktuellen Instruments
     class ExportJob;                                     // Hintergrund-Thread für den Export
