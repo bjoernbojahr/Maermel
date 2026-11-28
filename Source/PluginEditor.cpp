@@ -215,23 +215,9 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
     addValueBox (fine,   186.0f, kLineValue, 40.0f, shortValue);
 
     addKnob (keyShift, "keyshift", "KEYSHIFT", 255.0f, kKnobTop, 17.0f);
-    addKnob (crush,    maermel::ids::lofi, "LO-FI",    856.0f, kKnobTop, 17.0f);   // früher „Crush“; seit 07.10.2026 oben (an der Stelle von PAN)
-    addValueBox (keyShift, 255.0f, kKnobTop + 27.0f, 40.0f, shortValue);
-    addValueBox (crush,    856.0f, kKnobTop + 27.0f, 40.0f, [] (juce::Slider& s) { return juce::String (juce::roundToInt (s.getValue())); });
-    // Statt der Beschriftung LO-FI ein Umschalter LO-FI/CHORUS (26.10.2026); der Regler steuert den Anteil des gewählten
-    // Effekts. Die Anzeige beim Drehen richtet sich nach dem Effekt.
-    shownChorus = audioProcessor.isChorusMode();
-    fxButton.setButtonText (shownChorus ? "CHORUS" : "LO-FI");
-    placeButton (fxButton, { 831.0f, kKnobTop + 49.0f, 50.0f, 18.0f });
-    fxButton.onClick = [this] { toggleFxMode(); };
-    crush.onValueChange = [this]
-    {
-        if (crush.isMouseButtonDown())
-            showStatus (fxStatusText());
-        else
-            showStatusIfUser (crush, [this] { return fxStatusText(); });
-    };
-    crush.onDragStart = [this] { showStatus (fxStatusText()); };
+    addKnob (velOffset, "veloffset", "VEL OFFSET", 322.0f, kKnobTop, 17.0f);   // früher stand hier LO-FI (bis 07.10.2026)
+    addValueBox (keyShift,  255.0f, kKnobTop + 27.0f, 40.0f, shortValue);
+    addValueBox (velOffset, 322.0f, kKnobTop + 27.0f, 40.0f, shortValue);
     addKnob (pitchBend,  "pitchbend",  "P.BEND",          255.0f, kKnobLow, 17.0f);
     addKnob (wheelPitch, "wheelpitch", "PITCH WHEEL LFO", 322.0f, kKnobLow, 17.0f);   // Spalte 3 Punkte nach rechts (Platz für VEL OFFSET)
     addValueBox (pitchBend,  255.0f, kLineValue, 40.0f, shortValue);
@@ -263,11 +249,38 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
     addVFader (wheelFilter,  "wheelfilter",     "FILTER WHEEL LFO", 771.0f, 82.0f, 236.0f, false);
 
     // ---------------- Amp ----------------
+    // LO-FI/CHORUS (oberer Knopf)
+    addKnob (crush, maermel::ids::lofi, "LO-FI", 856.0f, kKnobTop, 17.0f);   // früher „Crush“; seit 07.10.2026 hier oben (an der Stelle von PAN)
+    addValueBox (crush, 856.0f, kKnobTop + 27.0f, 40.0f, [] (juce::Slider& s) { return juce::String (juce::roundToInt (s.getValue())); });
+    // Eingabefeld (Doppelklick) mit Modus und Samplerate dieser Instanz statt der globalen Werte für die
+    // DAW-Anzeige – sonst las eine Lo-Fi-Instanz z. B. Prozent, wenn eine andere auf Chorus stand (seit 1.0.3).
+    // Ersetzt die Funktionen, die die SliderAttachment in addKnob gesetzt hat.
+    crush.textFromValueFunction = [this] (double v)
+    {
+        return MaermelAudioProcessor::lofiText ((float) v, audioProcessor.isChorusMode(), audioProcessor.getSampleRate());
+    };
+    crush.valueFromTextFunction = [this] (const juce::String& t)
+    {
+        return (double) MaermelAudioProcessor::lofiValueFromText (t, audioProcessor.isChorusMode());
+    };
+    // Statt der Beschriftung LO-FI ein Umschalter LO-FI/CHORUS (26.10.2026); der Regler steuert den Anteil des gewählten
+    // Effekts. Die Anzeige beim Drehen richtet sich nach dem Effekt.
+    shownChorus = audioProcessor.isChorusMode();
+    fxButton.setButtonText (shownChorus ? "CHORUS" : "LO-FI");
+    placeButton (fxButton, { 831.0f, kKnobTop + 49.0f, 50.0f, 18.0f });
+    fxButton.onClick = [this] { toggleFxMode(); };
+    crush.onValueChange = [this]
+    {
+        if (crush.isMouseButtonDown())
+            showStatus (fxStatusText());
+        else
+            showStatusIfUser (crush, [this] { return fxStatusText(); });
+    };
+    crush.onDragStart = [this] { showStatus (fxStatusText()); };
+
     // WHEEL LFO der Amp-Sektion: Modulationsrad-Anteil für LFO-Volume und LFO-Pan (wie in Pitch und Filter)
-    addKnob (wheelAmp,  "wheelamp",  "AMP WHEEL LFO", 856.0f, kKnobLow, 17.0f);
-    addKnob (velOffset, "veloffset", "VEL OFFSET", 322.0f, kKnobTop, 17.0f);   // getauscht mit CRUSH (sitzt in Sample Start and Tune)
-    addValueBox (wheelAmp,  856.0f, kLineValue, 40.0f, shortValue);
-    addValueBox (velOffset, 322.0f, kKnobTop + 27.0f, 40.0f, shortValue);
+    addKnob (wheelAmp, "wheelamp", "AMP WHEEL LFO", 856.0f, kKnobLow, 17.0f);
+    addValueBox (wheelAmp, 856.0f, kLineValue, 40.0f, shortValue);
     addVFader (ampVel, "velocity",    "AMP VEL", 913.0f, 82.0f, 236.0f, false);
     addVFader (ampKey, "ampkeyscale", "AMP KEY", 953.0f, 82.0f, 236.0f, true);
     addVFader (volume, "volume",      "VOLUME",  991.0f, 82.0f, 236.0f, false);
@@ -282,7 +295,7 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
         const float dx0 = (l == 0) ? 112.0f : 446.0f, dx1 = (l == 0) ? 198.0f : 532.0f;
         const float wx = (l == 0) ? 24.0f : 358.0f;
 
-        addKnob (c.rate, (prefix + "rate").toRawUTF8(), title + " RATE", kx, 345.0f + kLfoDy, 25.0f);
+        addKnob (c.rate, prefix + "rate", title + " RATE", kx, 345.0f + kLfoDy, 25.0f);
         // Anzeige: Hz, bei Sync der Notenwert; ganz links DC (mit Invert -DC)
         c.rate.textFromValueFunction = [&c] (double v)
         {
@@ -299,7 +312,7 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
         c.sync.onClick = [this, &c, title] { c.rate.updateText(); showStatusIfUser (c.sync, [&c, title] { return title + (c.sync.getToggleState() ? " SYNC ON" : " SYNC OFF"); }); };
         c.env.onClick  = [this, &c, title] { showStatusIfUser (c.env, [&c, title] { return title + (c.env.getToggleState() ? " ENV MODE ON" : " ENV MODE OFF"); }); };
 
-        addHFader (c.delay, (prefix + "delay").toRawUTF8(), title + " DELAY", dx0, dx1, 392.0f + kLfoDy, false, false);
+        addHFader (c.delay, prefix + "delay", title + " DELAY", dx0, dx1, 392.0f + kLfoDy, false, false);
 
         const juce::StringArray waveNames { "TRI", "SIN", "SAW", "SQR" };
         std::vector<juce::TextButton*> list;
@@ -341,7 +354,7 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
                                          prefix + "release", (e == 0) ? juce::String ("fkey") : juce::String ("ampkey") };
             const char* names[] = { "A", "D", "S", "T", "R", "KEY" };
             for (size_t i = 0; i < 6; ++i)
-                addVFader (envs[e][i], ids[i].toRawUTF8(), name + names[i], xs[e][i], 318.0f, 452.0f, i == 3);
+                addVFader (envs[e][i], ids[i], name + names[i], xs[e][i], 318.0f, 452.0f, i == 3);
 
             // VelA / VelD: hellblauer Pfeil rechts am A- bzw. D-Fader
             const juce::String velIds[] = { prefix + "velattack", prefix + "veldecay" };
@@ -369,6 +382,19 @@ MaermelAudioProcessorEditor::MaermelAudioProcessorEditor (MaermelAudioProcessor&
     userScale = (float) library->getSettings().getDoubleValue (SettingsComponent::kGuiScaleKey, 1.0);
     blueBackground = library->getSettings().getBoolValue (SettingsComponent::kBlueBackgroundKey, true);   // Standard: Blau
     applyScale();
+
+    // Warnungen beim Öffnen des Fensters (seit 1.0.3): Die Zähler im Prozessor zählen alle Warnungen seit dem Start der
+    // Instanz. Ein neues Fenster begann bei 0 und zeigte deshalb eine alte Warnung erneut – auch wenn längst ein anderes
+    // Instrument ohne Fehler geladen war (z. B. Fenster in Logic schließen und wieder öffnen). Jetzt: Zähler übernehmen
+    // (nur neue Warnungen lösen etwas aus) und nur die Warnung zeigen, die zum aktuellen Instrument gehört.
+    shownMissingAlert = audioProcessor.getMissingSamplesAlert();
+    shownMemoryAlert = audioProcessor.getMemoryAlert();
+    shownMissingFileAlert = audioProcessor.getMissingFileAlert();
+    shownMissingInstrumentAlert = audioProcessor.getMissingInstrumentAlert();
+    const juce::String currentAlert = audioProcessor.getCurrentAlert();
+    if (currentAlert.isNotEmpty())
+        showAlert (currentAlert);
+
     startTimerHz (20);
     timerCallback();
 }
@@ -420,7 +446,7 @@ void MaermelAudioProcessorEditor::attachSlider (juce::Slider& s, const juce::Str
     };
 }
 
-void MaermelAudioProcessorEditor::addKnob (juce::Slider& s, const char* id, const juce::String& displayName,
+void MaermelAudioProcessorEditor::addKnob (juce::Slider& s, const juce::String& id, const juce::String& displayName,
                                            float cx, float cy, float radius)
 {
     s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
@@ -430,7 +456,7 @@ void MaermelAudioProcessorEditor::addKnob (juce::Slider& s, const char* id, cons
     attachSlider (s, id, displayName);
 }
 
-void MaermelAudioProcessorEditor::addVFader (juce::Slider& s, const char* id, const juce::String& displayName,
+void MaermelAudioProcessorEditor::addVFader (juce::Slider& s, const juce::String& id, const juce::String& displayName,
                                              float cx, float y0, float y1, bool bipolar)
 {
     s.setSliderStyle (juce::Slider::LinearVertical);
@@ -440,7 +466,7 @@ void MaermelAudioProcessorEditor::addVFader (juce::Slider& s, const char* id, co
     attachSlider (s, id, displayName);
 }
 
-void MaermelAudioProcessorEditor::addHFader (juce::Slider& s, const char* id, const juce::String& displayName,
+void MaermelAudioProcessorEditor::addHFader (juce::Slider& s, const juce::String& id, const juce::String& displayName,
                                              float x0, float x1, float cy, bool bipolar, bool compact)
 {
     s.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -525,9 +551,8 @@ juce::String MaermelAudioProcessorEditor::fxStatusText() const
     const float v = (float) crush.getValue();
     if (audioProcessor.isChorusMode())
         return v <= 0.0f ? juce::String ("CHORUS OFF") : "CHORUS " + juce::String (juce::roundToInt (v)) + " %";
-    if (auto* p = audioProcessor.parameters.getParameter (maermel::ids::lofi))
-        return "LO-FI " + p->getText (p->convertTo0to1 (v), 0);
-    return "LO-FI";
+    // Samplerate dieser Instanz, nicht die globale Anzeige der DAW (seit 1.0.3; siehe lofiText)
+    return "LO-FI " + MaermelAudioProcessor::lofiText (v, false, audioProcessor.getSampleRate());
 }
 
 // Umschalten nur hier (Bedienung in der Oberfläche): erst den Anteil auf 0 % (mit Change-Gesture, damit die DAW es als
@@ -626,7 +651,7 @@ void MaermelAudioProcessorEditor::timerCallback()
                                             ? fxStatusText()
                                             : juce::String (target.display) + " " + param->getCurrentValueAsText();
                 const juce::String withCc = "CC" + juce::String (audioProcessor.getControlCc (slot)) + " " + text;
-                showStatus (withCc.length() <= 23 ? withCc : text);
+                showStatus (display.fits (withCc) ? withCc : text);   // CC-Nummer nur, wenn sie noch Platz hat
             }
         }
     }
@@ -1290,4 +1315,6 @@ void MaermelAudioProcessorEditor::resized()
         settingsViewport->setBounds (getLocalBounds().withTrimmedTop (52).reduced (10, 0).withTrimmedBottom (8));
     if (aboutPanel != nullptr)
         aboutPanel->setBounds (getLocalBounds());
+    if (notesPanel != nullptr)
+        notesPanel->setBounds (getLocalBounds());   // wie aboutPanel (seit 1.0.3)
 }
