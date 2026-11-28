@@ -154,11 +154,10 @@ engine sources – from the project folder, for example on macOS or Linux:
     g++ -std=c++17 -O2 -Wall -Wextra -ISource/engine -ISource \
         tests/stucktest.cpp Source/engine/*.cpp Source/engine/exs/*.cpp -o stucktest
 
-(On macOS `clang++` works the same way.) `texttest`, `lfotest` and `exsmixtest` need only one or two files:
+(On macOS `clang++` works the same way.) `texttest` and `envlfotest` need only their own file:
 
     g++ -std=c++17 -O2 tests/texttest.cpp -o texttest
-    g++ -std=c++17 -O2 -ISource/engine tests/lfotest.cpp -o lfotest
-    g++ -std=c++17 -O2 -ISource/engine tests/exsmixtest.cpp Source/engine/exs/SFZWriter.cpp -o exsmixtest
+    g++ -std=c++17 -O2 -ISource/engine tests/envlfotest.cpp -o envlfotest
 
 Run the programs from inside the `tests` folder, so the relative sample paths of the test instruments
 are found:
@@ -167,12 +166,13 @@ are found:
 | --- | --- | --- |
 | `stucktest` | thousands of random note sequences – no voice may keep hanging | `stucktest layer/layer-test.sfz offby/offby-test.sfz xfade/xfade-test.sfz` |
 | `layertest` | voice limit counts notes, layers are never cut in half | `layertest layer/layer-test.sfz` |
+| `eqspacetest` | Parser: spaces around `=` (`key =66`), file names with spaces or `=` stay intact | `eqspacetest` |
+| `envlfotest` | Decay 0 without a click, LFO ↔ DC switch glides and DC ends exactly at ±1 | `envlfotest` |
+| `resettest` | CC121 "Reset All Controllers": pedal-held notes end, held keys keep sounding | `resettest layer/layer-test.sfz` |
 | `offbytest` | `group` / `off_by` (e.g. closed hi-hat stops the open one) | `offbytest offby/offby-test.sfz` |
 | `texttest` | typing values into the value fields | `texttest` |
 | `headertest` | reading root key and loop directly from WAV/AIFF headers, compared with full loading | `headertest doppelchunks/*.wav doppelchunks/*.aif` |
 | `veltest` | velocity curves and offsets | `veltest` |
-| `lfotest` | LFO after switching Env Mode on and off (must swing freely again) | `lfotest` |
-| `exsmixtest` | EXS import: group and zone values combined correctly (ranges, volume, pan) | `exsmixtest` |
 | `locatortest` | finding an instrument of a DAW project on another computer | `locatortest` |
 | `exporttest` | "Export instrument…" (rewrite SFZ, collect samples) | `exporttest instrument.sfz targetfolder name` |
 | `sfzrender` | plays an SFZ file from an event list and writes a WAV file – to listen to the engine without a DAW | `sfzrender xfade/xfade-test.sfz xfade/ev-pedal.txt out.wav` |
